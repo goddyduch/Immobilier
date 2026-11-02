@@ -1,0 +1,316 @@
+
+"""
+Récupération des annonces Bien'ici avec requests (API JSON interne, non officielle).
+
+Usage (sortie JSON par défaut, CSV si --sortie finit par .csv) :
+    python Scrapping_v2.py --ville Poitiers --prix-max 350000 --surface-min 40
+    python Scrapping_v2.py --ville Poitiers --sortie resultats.csv
+    python Scrapping_v2.py --ville Paris --type location --prix-max 1500 --max-annonces 200
+    python Scrapping_v2.py --ville Poitiers --debug   # affiche les clés d'une annonce brute
+"""
+
+import argparse
+import csv
+import json
+import random
+import time
+
+import requests
+
+BASE_URL = "https://www.bienici.com"
+SUGGEST_URL = "https://res.bienici.com/suggest.json"
+ADS_URL = f"{BASE_URL}/realEstateAds.json"
+
+HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/124.0 Safari/537.36"
+    ),
+    "Accept": "application/json, text/plain, */*",
+    "Accept-Language": "fr-FR,fr;q=0.9",
+    "Referer": BASE_URL + "/",
+}
+
+session = requests.Session()
+session.headers.update(HEADERS)
+
+
+# ---------------------------------------------------------------------------
+# Utilitaires
+# ---------------------------------------------------------------------------
+
+def en_nombre(valeur):
+    """
+    Convertit une valeur de l'API en nombre (float) ou None.
+
+    L'API renvoie parfois une liste (ex. [45.0, 62.5] pour un programme neuf
+    qui regroupe plusieurs lots) : dans ce cas on garde la plus petite valeur.
+    """
+    if valeur is None:
+        return None
+    if isinstance(valeur, (list, tuple)):
+        nombres = [n for n in (en_nombre(v) for v in valeur) if n is not None]
+        return min(nombres) if nombres else None
+    try:
+        return float(valeur)
+    except (TypeError, ValueError):
+        return None
+
+
+def en_entier(valeur):
+    """Comme en_nombre, mais renvoie un int (ou None)."""
+    n = en_nombre(valeur)
+    return int(n) if n is not None else None
+
+
+def premier_non_nul(a, *cles):
+    """Retourne la première valeur non nulle parmi plusieurs clés possibles."""
+    for cle in cles:
+        v = a.get(cle)
+        if v is not None and v != "":
+            return v
+    return None
+
+
+def lettre_classe(valeur):
+    """Normalise une classe énergétique (DPE/GES) en lettre A-G, sinon None."""
+    if isinstance(valeur, str) and valeur.strip().upper() in list("ABCDEFG"):
+        return valeur.strip().upper()
+    return None
+
+
+def extraire_position(a):
+    """
+    Retourne (latitude, longitude). Bien'ici fournit soit 'position', soit
+    'blurInfo.position' (position floutée) quand l'adresse exacte est masquée.
+    """
+    pos = a.get("position") or (a.get("blurInfo") or {}).get("position") or {}
+    lat = en_nombre(pos.get("lat") if "lat" in pos else pos.get("latitude"))
+    lon = en_nombre(pos.get("lon") if "lon" in pos else pos.get("longitude"))
+    return lat, lon
+
+
+def extraire_quartier(a):
+    """Quartier : 'district' est un objet (libelle/name) ou parfois une chaîne."""
+    d = a.get("district")
+    if isinstance(d, dict):
+        return d.get("libelle") or d.get("name")
+    if isinstance(d, str):
+        return d
+    return a.get("neighborhood")
+
+
+def get_json(url, params=None, essais=3):
+    """GET avec quelques tentatives en cas d'erreur réseau ou de limitation."""
+    for i in range(essais):
+        try:
+            r = session.get(url, params=params, timeout=15)
+            if r.status_code == 429:  # trop de requêtes : on attend plus longtemps
+                time.sleep(5 * (i + 1))
+                continue
+            r.raise_for_status()
+            return r.json()
+        except requests.RequestException as e:
+            if i == essais - 1:
+                raise
+            print(f"Erreur ({e}), nouvelle tentative...")
+            time.sleep(2 * (i + 1))
+
+
+# ---------------------------------------------------------------------------
+# Collecte
+# ---------------------------------------------------------------------------
+
+def trouver_zone(ville):
+    """Retourne les zoneIds correspondant à une ville (via la route de suggestion)."""
+    suggestions = get_json(SUGGEST_URL, params={"q": ville})
+    if not suggestions:
+        raise ValueError(f"Aucune zone trouvée pour « {ville} »")
+    return suggestions[0]["zoneIds"]
+
+
+def recuperer_annonces(ville, type_operation="buy", prix_max=None, prix_min=None,
+                       surface_min=None, surface_max=None, max_annonces=500):
+    zone_ids = trouver_zone(ville)
+    taille_page = 50
+    annonces, vues = [], set()
+    debut = 0
+
+    while len(annonces) < max_annonces:
+        filtres = {
+            "size": taille_page,
+            "from": debut,
+            "showAllModels": False,
+            "filterType": type_operation,  # "buy" ou "rent"
+            "propertyType": ["flat", "house"],
+            "page": debut // taille_page + 1,
+            "sortBy": "relevance",
+            "sortOrder": "desc",
+            "onTheMarket": [True],
+            "zoneIdsByTypes": {"zoneIds": zone_ids},
+        }
+        if prix_max:
+            filtres["maxPrice"] = prix_max
+        if prix_min:
+            filtres["minPrice"] = prix_min
+        if surface_min:
+            filtres["minArea"] = surface_min
+        if surface_max:
+            filtres["maxArea"] = surface_max
+
+        data = get_json(ADS_URL, params={"filters": json.dumps(filtres)})
+        page = data.get("realEstateAds", [])
+        if not page:
+            break
+
+        for a in page:
+            if a.get("id") in vues:  # dédoublonnage
+                continue
+            vues.add(a.get("id"))
+            annonces.append(a)
+
+        total = data.get("total", 0)
+        debut += taille_page
+        print(f"{len(annonces)} annonces récupérées (total annoncé : {total})")
+        if debut >= total:
+            break
+        time.sleep(random.uniform(2, 4))  # pause pour ne pas surcharger le site
+
+    return annonces[:max_annonces]
+
+
+def simplifier(a):
+    """Garde uniquement les champs utiles, avec prix et surface en nombres."""
+    lat, lon = extraire_position(a)
+    return {
+        "id": a.get("id"),
+        "titre": a.get("title"),
+        "ville": a.get("city"),
+        "code_postal": a.get("postalCode"),
+        "prix": en_nombre(a.get("price")),
+        "surface_m2": en_nombre(a.get("surfaceArea")),
+        "pieces": en_nombre(a.get("roomsQuantity")),
+        "nbr_chambres": en_entier(a.get("bedroomsQuantity")),
+        "etage": en_entier(a.get("floor")),
+        "annee_construction": en_entier(
+            premier_non_nul(a, "yearOfConstruction", "buildingYear", "constructionYear")
+        ),
+        "dpe": lettre_classe(a.get("energyClassification")),
+        "ges": lettre_classe(a.get("greenhouseGazClassification")),
+        "quartier": extraire_quartier(a),
+        "latitude": lat,
+        "longitude": lon,
+        "type_bien": a.get("propertyType"),
+        "description": (a.get("description") or "").replace("\n", " ").strip(),
+        "date_publication": a.get("publicationDate"),
+        "url": f"{BASE_URL}/annonce/{a.get('id')}" if a.get("id") else None,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Filtrage local
+# ---------------------------------------------------------------------------
+
+def filtrer(annonces, ville=None, surface_min=None, surface_max=None,
+            prix_min=None, prix_max=None):
+    """
+    Filtre les annonces simplifiées. Si un filtre est demandé et que la
+    valeur de l'annonce est inconnue (None), l'annonce est écartée.
+    """
+    resultats = []
+    for a in annonces:
+        if ville and (a["ville"] or "").lower() != ville.lower():
+            continue
+
+        surface, prix = a["surface_m2"], a["prix"]
+
+        if surface_min is not None and (surface is None or surface < surface_min):
+            continue
+        if surface_max is not None and (surface is None or surface > surface_max):
+            continue
+        if prix_min is not None and (prix is None or prix < prix_min):
+            continue
+        if prix_max is not None and (prix is None or prix > prix_max):
+            continue
+
+        resultats.append(a)
+    return resultats
+
+
+# ---------------------------------------------------------------------------
+# Export
+# ---------------------------------------------------------------------------
+
+def exporter_csv(annonces, chemin):
+    if not annonces:
+        print("Rien à exporter.")
+        return
+    with open(chemin, "w", newline="", encoding="utf-8-sig") as f:
+        writer = csv.DictWriter(f, fieldnames=list(annonces[0].keys()), delimiter=";")
+        writer.writeheader()
+        writer.writerows(annonces)
+    print(f"{len(annonces)} annonces enregistrées dans {chemin}")
+
+
+def exporter_json(annonces, chemin):
+    """Écrit les annonces dans un fichier JSON (liste d'objets, accents conservés)."""
+    if not annonces:
+        print("Rien à exporter.")
+        return
+    with open(chemin, "w", encoding="utf-8") as f:
+        json.dump(annonces, f, ensure_ascii=False, indent=2)
+    print(f"{len(annonces)} annonces enregistrées dans {chemin}")
+
+
+def exporter(annonces, chemin):
+    """Choisit le format selon l'extension du fichier de sortie (.json ou .csv)."""
+    if chemin.lower().endswith(".csv"):
+        exporter_csv(annonces, chemin)
+    else:
+        exporter_json(annonces, chemin)
+
+
+def main():
+    p = argparse.ArgumentParser(description="Annonces Bien'ici")
+    p.add_argument("--ville", required=True)
+    p.add_argument("--type", choices=["achat", "location"], default="achat")
+    p.add_argument("--prix-min", type=int)
+    p.add_argument("--prix-max", type=int)
+    p.add_argument("--surface-min", type=float)
+    p.add_argument("--surface-max", type=float)
+    p.add_argument("--max-annonces", type=int, default=200)
+    p.add_argument("--sortie", default="annonces_bienici.json",
+                   help="fichier de sortie : .json (défaut) ou .csv")
+    p.add_argument("--debug", action="store_true",
+                   help="affiche les clés de la 1re annonce brute (pour vérifier les noms de champs)")
+    args = p.parse_args()
+
+    brutes = recuperer_annonces(
+        ville=args.ville,
+        type_operation="buy" if args.type == "achat" else "rent",
+        prix_min=args.prix_min,
+        prix_max=args.prix_max,
+        surface_min=args.surface_min,
+        surface_max=args.surface_max,
+        max_annonces=args.max_annonces,
+    )
+
+    if args.debug and brutes:
+        print("Clés de la 1re annonce brute :", sorted(brutes[0].keys()))
+
+    annonces = [simplifier(a) for a in brutes]
+    annonces = filtrer(
+        annonces,
+        surface_min=args.surface_min, surface_max=args.surface_max,
+        prix_min=args.prix_min, prix_max=args.prix_max,
+    )
+
+    for a in annonces[:5]:
+        print(f"- {a['ville']} | {a['prix']} € | {a['surface_m2']} m² | "
+              f"DPE {a['dpe']} | étage {a['etage']} | {a['quartier']} | {a['titre']}")
+
+    exporter(annonces, args.sortie)
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,25 @@
+# Tout ignorer par défaut
+*
+
+# Fichiers et dossiers explicitement ignorés dans le projet
+.DS_Store
+.venv/
+.vscode/
+__pycache__/
+annonces_html/
+session_jinka/
+test/
+annonces.csv
+annonces_bienici.csv
+annonces_bienici.json
+jinka_annonces.json
+
+# Garder uniquement ces fichiers (liste blanche)
+!.gitignore
+!DB.py
+!Merge.py
+!Jinka.py
+!BienIci.py
+!FeatureEngineering.py
+!annonces.csv
+
