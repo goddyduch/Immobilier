@@ -1,10 +1,16 @@
 """
-Préparation des annonces, enrichissement LLM (Ollama), intégration des ventes
-notariées réelles (DVF Poitiers) et évaluation approfondie pour prédire le prix
-et estimer la marge de négociation.
+Script 1/3 : Feature Engineering — IA Immobilier Poitiers.
 
-    python FeatureEngineering.py          # télécharge DVF, enrichit via Ollama et évalue
-    python Dashboard.py                   # lance le dashboard interactif Dash
+Responsabilité unique :
+- Lit les tables brutes (`offres_historique_brut`, `offres_recentes_brut`).
+- Applique le nettoyage, le dédoublonnage, les regex texte, l'enrichissement LLM (Ollama),
+  les distances GPS et le prix/m² des ventes notariées réelles (DVF Poitiers).
+- Génère et sauvegarde les tables APRÈS Feature Engineering :
+  • `offres_historique_features` (`csv/annonces_historique_features.csv`)
+  • `offres_recentes_features`   (`csv/annonces_recentes_features.csv`)
+
+Usage :
+    python FeatureEngineering.py
 """
 
 import json
@@ -13,31 +19,116 @@ import re
 import urllib.request
 import numpy as np
 import pandas as pd
-from sklearn.compose import ColumnTransformer, TransformedTargetRegressor
-from sklearn.ensemble import HistGradientBoostingRegressor
-from sklearn.inspection import permutation_importance
-from sklearn.model_selection import KFold, cross_val_predict
 from sklearn.neighbors import BallTree
-from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import TargetEncoder
 
-# Repères de Poitiers (coordonnées centre-ville & gare)
-CENTRE = (46.5802, 0.3404)
-GARE = (46.5826, 0.3333)
+CHEMIN_DVF_CSV = os.path.join("csv", "dvf_grand_poitiers.csv")
+CHEMIN_DVF_POITIERS_LEGACY = os.path.join("csv", "dvf_poitiers.csv")
+
+# Codes INSEE des communes de Grand Poitiers
+CODES_INSEE_GRAND_POITIERS = [
+    "86194",  # Poitiers
+    "86041",  # Buxerolles
+    "86214",  # Saint-Benoît
+    "86158",  # Migné-Auxances
+    "86062",  # Chasseneuil-du-Poitou
+    "86115",  # Jaunay-Marigny
+    "86027",  # Biard
+    "86297",  # Vouneuil-sous-Biard
+    "86100",  # Fontaine-le-Comte
+    "86163",  # Montamisé
+    "86263",  # Smarves
+    "86133",  # Ligugé
+]
+
+# Repères géographiques de Grand Poitiers
+CENTRE = (46.5802, 0.3404)       # Hôtel de Ville de Poitiers
+GARE = (46.5826, 0.3333)         # Gare de Poitiers
+CAMPUS = (46.5695, 0.3827)       # Campus Universitaire (Beaulieu)
+CHU = (46.5567, 0.3765)          # CHU de la Milétrie
+FUTUROSCOPE = (46.6667, 0.3667)  # Technopole du Futuroscope
+
+# Périmètres QPV (Quartiers Prioritaires de la Politique de la Ville - ANCT Grand Poitiers)
+# (centre lat, lon, rayon approximatif en km)
+QPV_GRAND_POITIERS = [
+    ("Couronneries", 46.5935, 0.3555, 0.65),
+    ("Trois Cités", 46.5638, 0.3332, 0.55),
+    ("Bel Air", 46.5875, 0.3125, 0.45),
+    ("Beaulieu", 46.5720, 0.3705, 0.55),
+    ("Saint-Éloi", 46.5890, 0.3740, 0.50),
+]
+
+# Référentiel socio-économique & parc immobilier Grand Poitiers (INSEE FiLoSoFi / RP / RPLS)
+# Colonnes : (revenu_median_uc_euro, taux_hlm_pct, part_proprietaires_pct, taux_vacance_pct)
+STATS_COMMUNES_GRAND_POITIERS = {
+    "86000": (22350, 26.5, 34.0, 9.8),   # Poitiers (moyenne)
+    "86180": (24800, 17.2, 62.0, 5.4),   # Buxerolles
+    "86280": (26900, 9.5, 67.5, 5.1),    # Saint-Benoît
+    "86440": (25100, 8.2, 72.0, 4.9),    # Migné-Auxances
+    "86360": (24400, 11.4, 58.0, 6.2),   # Chasseneuil-du-Poitou / Montamisé
+    "86130": (24600, 7.8, 70.5, 5.5),    # Jaunay-Marigny
+    "86580": (26200, 6.5, 71.0, 4.8),    # Biard / Vouneuil-sous-Biard
+    "86240": (25500, 6.0, 74.0, 4.6),    # Fontaine-le-Comte / Smarves / Ligugé
+}
+
+# Affinage par quartier à Poitiers (86000) selon les IRIS INSEE FiLoSoFi / RPLS
+STATS_QUARTIERS_POITIERS = {
+    "Centre-ville": (24900, 8.5, 29.0, 11.5),
+    "Saint-Eloi - Breuil - Mingot": (21200, 32.0, 44.0, 8.0),
+    "Couronneries": (16200, 56.0, 22.0, 10.5),
+    "Trois Cités": (16500, 54.0, 24.0, 10.0),
+    "Beaulieu": (18400, 42.0, 28.0, 9.5),
+    "Ouest": (21800, 24.0, 46.0, 8.5),
+    "Montbernage - Pont Neuf": (23500, 14.0, 45.0, 8.0),
+    "Gibauderie": (24200, 16.0, 52.0, 7.5),
+    "Poitiers": (22350, 26.5, 34.0, 9.8),
+}
 
 LABELS_FEATURES = {
     "surface_m2": "Surface habitable (m²)",
-    "pm2_voisinage": "Prix/m² Notaire DVF voisinage",
+    "log_surface": "Logarithme de la surface",
+    "sqrt_surface": "Racine de la surface",
+    "inv_surface": "Inverse surface (1 / m²)",
+    "surface_par_piece": "Surface moyenne par pièce (m²/p)",
+    "ratio_chambres": "Ratio Chambres / Pièces",
+    "surface_relative_marche": "Surface relative au marché local",
+    "pm2_voisinage": "Prix/m² Notaire DVF voisinage (800m)",
+    "pm2_dvf_pondere_dist": "Prix/m² DVF pondéré par la distance",
+    "pm2_dvf_taille_proche": "Prix/m² DVF biens de taille proche",
+    "pm2_dvf_tranche_surface": "Prix/m² DVF par tranche de surface",
+    "pm2_dvf_dispersion": "Dispersion €/m² DVF voisinage",
+    "nb_ventes_dvf": "Nb ventes Notaires DVF (800m)",
+    "tendance_dvf_pct": "Tendance prix DVF secteur (%)",
+    "valeur_dvf_ajustee_taille": "Valeur DVF ajustée par taille (€)",
+    "valeur_dvf_nette_travaux": "Valeur DVF nette de travaux (€)",
+    "cout_travaux_estime_euro": "Coût travaux estimé (€)",
+    "cout_travaux_m2": "Coût travaux estimé (€/m²)",
+    "trav_rafraichissement": "Poste travaux : Rafraîchissement",
+    "trav_cuisine_sdb": "Poste travaux : Cuisine / SDB",
+    "trav_menuiseries": "Poste travaux : Menuiseries",
+    "trav_elec_plomberie": "Poste travaux : Élec. / Plomberie",
+    "trav_gros_oeuvre": "Poste travaux : Gros œuvre / Isol.",
     "type_bien": "Type de bien (Maison / Appart.)",
-    "quartier": "Quartier",
+    "quartier": "Quartier / Commune",
     "dist_centre_km": "Distance Centre-ville (km)",
     "dist_gare_km": "Distance Gare (km)",
+    "dist_campus_km": "Distance Campus Universitaire (km)",
+    "dist_chu_km": "Distance CHU Milétrie (km)",
+    "dist_futuroscope_km": "Distance Futuroscope (km)",
+    "est_en_qpv": "Situé en zone QPV (0/1)",
+    "dist_qpv_km": "Distance au QPV le plus proche (km)",
+    "revenu_median_secteur": "Revenu médian du secteur (€/an)",
+    "taux_hlm_secteur": "Taux de logements HLM secteur (%)",
+    "part_proprietaires_secteur": "Part propriétaires occupants (%)",
+    "taux_vacance_secteur": "Taux de logements vacants (%)",
     "dpe_num": "Note DPE (A à G)",
     "annee_construction": "Année de construction",
+    "age_bien": "Ancienneté du bien (années)",
     "ges_num": "Note GES (A à G)",
     "nbr_chambres": "Nombre de chambres",
     "pieces": "Nombre de pièces",
     "etage": "Étage",
+    "est_rdc": "Rez-de-chaussée (0/1)",
+    "etage_eleve_sans_ascenseur": "Étage ≥ 3 sans ascenseur (0/1)",
     "latitude": "Latitude",
     "longitude": "Longitude",
     "txt_longueur": "Longueur du descriptif",
@@ -47,6 +138,13 @@ LABELS_FEATURES = {
     "llm_etat_score": "Note État du bien (LLM 1-5)",
     "llm_travaux_score": "Niveau de travaux (LLM 0-3)",
     "llm_note_offre": "Note Attractivité (LLM /10)",
+    "vis_nb_photos": "Nombre de photos de l'annonce",
+    "vis_luminosite": "Luminosité moyenne des photos",
+    "vis_contraste": "Contraste moyen des photos",
+    "vis_nettete": "Netteté moyenne des photos",
+    "vis_saturation": "Saturation couleurs photos",
+    "vis_etat_vlm": "Note état intérieur VLM (1-5)",
+    "iris_code": "Îlot IRIS exact (GPS)",
     "txt_jardin": "Mot-clé : Jardin",
     "txt_a_renover": "Mot-clé : À rénover / Travaux",
     "txt_terrasse": "Mot-clé : Terrasse",
@@ -59,7 +157,49 @@ LABELS_FEATURES = {
     "txt_dernier_etage": "Mot-clé : Dernier étage",
     "txt_lumineux": "Mot-clé : Lumineux",
     "txt_calme": "Mot-clé : Calme",
+    "txt_investissement": "Mot-clé : Investissement / Étudiant",
+    "txt_pac": "Mot-clé : Pompe à chaleur / Clim",
+    "txt_piscine": "Mot-clé : Piscine",
+    "txt_immeuble": "Mot-clé : Immeuble de rapport / Lots",
+    "txt_standing": "Mot-clé : Standing / Architecte",
 }
+
+CHEMIN_IRIS_GEOJSON = os.path.join("csv", "iris_grand_poitiers.geojson")
+ORDRE_DPE = {c: i for i, c in enumerate("ABCDEFG", start=1)}
+CATEGORIELLES = ["quartier", "iris_code", "type_bien"]
+
+# Colonnes générées uniquement lors de la prédiction/évaluation (ne doivent JAMAIS être dans les tables *_features ni dans X)
+COLONNES_PREDICTION = [
+    "prix_reel",
+    "prix_predit",
+    "ecart_euro",
+    "erreur_abs_euro",
+    "ecart_pct",
+    "erreur_abs_pct",
+    "pm2_reel",
+    "pm2_predit",
+    "quartier_clean",
+    "type_label",
+    "titre_propre",
+    "pm2_notaire_dvf",
+    "prix_notaire_dvf",
+    "ecart_vs_notaire_pct",
+    "taux_nego_estime_pct",
+    "prix_cible_nego",
+    "economie_nego_euro",
+    "prix_total_projet",
+    "valeur_estimee_renovee",
+    "gain_net_apres_travaux",
+    "decote_nette_pct",
+    "score_pouvoir_nego",
+    "tranche_prix",
+]
+
+
+def supprimer_colonnes_prediction(df: pd.DataFrame) -> pd.DataFrame:
+    """Garantit qu'aucune colonne de prédiction antérieure ne reste dans une table de features."""
+    cols_presentes = [c for c in COLONNES_PREDICTION if c in df.columns]
+    return df.drop(columns=cols_presentes) if cols_presentes else df.copy()
 
 # --------------------------------------------------------------------------
 # 1. Nettoyage, URLs & Doublons
@@ -97,15 +237,39 @@ def reparer_url(row: pd.Series) -> str:
     return url
 
 
-def nettoyer_annonces(df: pd.DataFrame, verbose: bool = True) -> pd.DataFrame:
-    """Supprime les lignes sans prix ou surface valide, harmonise les catégories et répare les URLs."""
+def nettoyer_annonces(df: pd.DataFrame, verbose: bool = True, exclure_atypiques: bool = True) -> pd.DataFrame:
+    """
+    Nettoie les annonces :
+    - Garde uniquement les biens de la Vienne (`86xxx`, évite les homonymes type Saint-Benoît 974)
+    - Supprime les prix/surfaces manquants ou aberrants
+    - Pour l'investissement résidentiel Grand Poitiers (`exclure_atypiques=True`), écarte
+      les biens d'exception hors marché (> 480 000 € ou > 240 m² ou châteaux/manoirs)
+    """
     df = df.copy()
     avant = len(df)
     df = df.dropna(subset=["prix", "surface_m2"])
     df = df[(df["prix"] > 0) & (df["surface_m2"] > 0)].copy()
+
+    if "code_postal" in df.columns:
+        cp_str = df["code_postal"].astype(str).str.strip()
+        df = df[cp_str.str.startswith("86")].copy()
+
+    pm2 = df["prix"] / df["surface_m2"]
+    df = df[pm2.between(300, 12000)].copy()
+
+    if exclure_atypiques:
+        txt_td = (df["titre"].fillna("") + " " + df["description"].fillna("")).str.lower()
+        est_chateau = txt_td.str.contains(r"\bch[âa]teau\b|\bmanoir\b|\bpropri[ée]t[ée]\s+d'exception\b", regex=True)
+        est_viager_encheres = txt_td.str.contains(
+            r"\bviager\b|\bbouquet\b|\bnue[-\s]?propri[ée]t[ée]\b|\busufruit\b|\brente\s+viag[èe]re\b|\bench[èe]res\b|\bvente\s+[àa]\s+terme\b",
+            regex=True,
+        )
+        pm2_cur = df["prix"] / df["surface_m2"]
+        df = df[(df["prix"] <= 480_000) & (df["surface_m2"] <= 240) & (~est_chateau) & (~est_viager_encheres) & (pm2_cur >= 950)].copy()
+
     suppr = avant - len(df)
     if verbose and suppr:
-        print(f"{suppr} annonces supprimées (prix ou surface manquant/invalide).")
+        print(f"{suppr} annonces supprimées (hors 86, viager/enchères, < 950 €/m² ou luxe > 480k€ / > 240m²).")
 
     if "quartier" in df.columns:
         df["quartier"] = df["quartier"].replace(QUARTIERS_HARMONISES)
@@ -152,6 +316,11 @@ MOTS = {
     "dernier_etage": r"dernier\s+[ée]tage",
     "lumineux": r"lumineu|baign[ée]\s+de\s+lumi[èe]re|plein\s+sud",
     "calme": r"\bcalme\b|sans\s+vis[- ]+[àa][- ]vis",
+    "investissement": r"investissement|locatif|rendement|rentabilit[ée]|colocation|[ée]tudiant|campus",
+    "pac": r"pompe\s+[àa]\s+chaleur|\bpac\b|climatisation\s+r[ée]versible",
+    "piscine": r"piscine",
+    "immeuble": r"immeuble\s+de\s+rapport|immeuble\s+entier|monopropri[ée]t[ée]|plusieurs\s+lots",
+    "standing": r"architecte|maison\s+de\s+ma[îi]tre|contemporaine|haut\s+de\s+gamme|d[ée]pendances",
 }
 
 
@@ -159,12 +328,10 @@ def extraire_chiffres_texte(desc_serie: pd.Series) -> pd.DataFrame:
     """Extrait par regex la surface extérieure (terrain/jardin) et les charges annuelles."""
     s = desc_serie.fillna("").str.lower()
 
-    # Surface terrain / jardin / parcelle (ex: "terrain de 362 m²", "jardin privatif de 160m2")
     terrain = s.str.extract(
         r"(?:terrain|jardin(?:\s+privatif)?|parcelle)\s+(?:clos\s+|arbor[ée]\s+)?(?:de\s+|d'environ\s+)?(\d{2,5})\s*m[²2]",
         expand=False,
     )
-    # Charges annuelles (ex: "charges annuelles : 1572 €" ou "soit 1572 € annuel")
     charges = s.str.extract(
         r"(?:charges\s+annuelles\s*:\s*|soit\s+)(\d{2,5})(?:[.,]\d+)?\s*(?:€|euros|¤)",
         expand=False,
@@ -295,10 +462,6 @@ def enrichir_avec_ollama(
     - llm_travaux_score (0 à 3)
     - llm_note_offre (note sur 10)
     - llm_resume (synthèse courte + points de négociation)
-
-    Utilise un cache JSON local (ollama_features_cache.json). Si le serveur local Ollama
-    est actif, interroge `qwen2.5:0.5b` en mode JSON structuré pour chaque annonce non
-    encore analysée par Ollama.
     """
     df = df.copy()
     cache = {}
@@ -326,7 +489,6 @@ def enrichir_avec_ollama(
         ad_id = str(row.get("id", ""))
         entree_cache = cache.get(ad_id)
 
-        # Si déjà généré par Ollama (ou si Ollama est éteint et qu'on a déjà le cache), on réutilise
         if entree_cache and (entree_cache.get("source") == "ollama" or not ollama_dispo):
             resultats.append(entree_cache)
             continue
@@ -407,466 +569,692 @@ def features_geo(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
     df["dist_centre_km"] = haversine_km(df["latitude"], df["longitude"], *CENTRE)
     df["dist_gare_km"] = haversine_km(df["latitude"], df["longitude"], *GARE)
+    df["dist_campus_km"] = haversine_km(df["latitude"], df["longitude"], *CAMPUS)
+    df["dist_chu_km"] = haversine_km(df["latitude"], df["longitude"], *CHU)
+    df["dist_futuroscope_km"] = haversine_km(df["latitude"], df["longitude"], *FUTUROSCOPE)
     return df
 
 
-def telecharger_ou_charger_dvf(dvf_path: str = "dvf_poitiers.csv", verbose: bool = True) -> pd.DataFrame | None:
+def features_open_data_grand_poitiers(df: pd.DataFrame) -> pd.DataFrame:
     """
-    Charge le fichier local des ventes notariées DVF de Poitiers (code INSEE 86194),
+    Rattache par GPS et code postal/quartier les indicateurs Open Data Grand Poitiers :
+    - QPV (Couronneries, Trois Cités, Bel Air, Beaulieu, Saint-Éloi) : `est_en_qpv`, `dist_qpv_km`
+    - INSEE FiLoSoFi / RPLS / RP : `revenu_median_secteur`, `taux_hlm_secteur`,
+      `part_proprietaires_secteur`, `taux_vacance_secteur`
+    """
+    df = df.copy()
+
+    # 1. Distance au QPV le plus proche & appartenance QPV
+    if len(df) > 0:
+        dists_qpv = np.column_stack([
+            haversine_km(df["latitude"], df["longitude"], lat_q, lon_q)
+            for _, lat_q, lon_q, _ in QPV_GRAND_POITIERS
+        ])
+        rayons_qpv = np.array([r_q for _, _, _, r_q in QPV_GRAND_POITIERS])
+        with np.errstate(all="ignore"):
+            df["dist_qpv_km"] = np.round(np.nanmin(dists_qpv, axis=1), 3)
+            en_qpv = np.nanmin(dists_qpv - rayons_qpv, axis=1) <= 0
+        df["est_en_qpv"] = np.where(df["latitude"].notna() & en_qpv, 1, 0)
+    else:
+        df["dist_qpv_km"] = np.nan
+        df["est_en_qpv"] = 0
+
+    # 2. Revenus médians, HLM, propriétaires & vacance (INSEE FiLoSoFi / RPLS / RP)
+    rev_l, hlm_l, prop_l, vac_l = [], [], [], []
+    for _, row in df.iterrows():
+        q = str(row.get("quartier") or "")
+        cp = str(row.get("code_postal") or "")[:5]
+        if q in STATS_QUARTIERS_POITIERS:
+            stats = STATS_QUARTIERS_POITIERS[q]
+        elif cp in STATS_COMMUNES_GRAND_POITIERS:
+            stats = STATS_COMMUNES_GRAND_POITIERS[cp]
+        else:
+            stats = STATS_COMMUNES_GRAND_POITIERS["86000"]
+
+        # Ajustement local si situé dans un QPV sans quartier renseigné
+        if row.get("est_en_qpv", 0) == 1 and q not in STATS_QUARTIERS_POITIERS:
+            stats = (16800, 48.0, 26.0, 10.0)
+
+        rev_l.append(stats[0])
+        hlm_l.append(stats[1])
+        prop_l.append(stats[2])
+        vac_l.append(stats[3])
+
+    df["revenu_median_secteur"] = rev_l
+    df["taux_hlm_secteur"] = hlm_l
+    df["part_proprietaires_secteur"] = prop_l
+    df["taux_vacance_secteur"] = vac_l
+
+    # 3. Mobilité (arrêts Vitalis / gares) & Commerces de proximité (cache OpenStreetMap Grand Poitiers)
+    lat_arr = pd.to_numeric(df["latitude"], errors="coerce").to_numpy()
+    lon_arr = pd.to_numeric(df["longitude"], errors="coerce").to_numpy()
+
+    def _calc_poi(csv_path: str, rayon_km: float, filtre_col: str | None = None, filtre_vals: set[str] | None = None):
+        if not os.path.exists(csv_path) or len(df) == 0:
+            return np.full(len(df), np.nan), np.zeros(len(df), dtype=int)
+        poi = pd.read_csv(csv_path)
+        if filtre_col and filtre_vals and filtre_col in poi.columns:
+            poi = poi[poi[filtre_col].isin(filtre_vals)]
+        poi = poi.dropna(subset=["latitude", "longitude"])
+        if poi.empty:
+            return np.full(len(df), np.nan), np.zeros(len(df), dtype=int)
+        plat = poi["latitude"].to_numpy(dtype=float)
+        plon = poi["longitude"].to_numpy(dtype=float)
+        dist_min_m = np.full(len(df), np.nan)
+        nb_dans_rayon = np.zeros(len(df), dtype=int)
+        for i in range(len(df)):
+            if np.isnan(lat_arr[i]) or np.isnan(lon_arr[i]):
+                continue
+            d_km = haversine_km(lat_arr[i], lon_arr[i], plat, plon)
+            dist_min_m[i] = round(float(np.min(d_km) * 1000.0), 0)
+            nb_dans_rayon[i] = int(np.sum(d_km <= rayon_km))
+        return dist_min_m, nb_dans_rayon
+
+    d_bus, nb_bus = _calc_poi(os.path.join("csv", "transports_grand_poitiers.csv"), 0.40)
+    df["dist_arret_bus_m"] = d_bus
+    df["nb_arrets_bus_400m"] = nb_bus
+
+    d_alim, _ = _calc_poi(
+        os.path.join("csv", "commerces_grand_poitiers.csv"),
+        0.50,
+        filtre_col="categorie",
+        filtre_vals={"supermarket", "convenience", "bakery", "butcher", "greengrocer"},
+    )
+    _, nb_comm = _calc_poi(os.path.join("csv", "commerces_grand_poitiers.csv"), 0.50)
+    df["dist_commerce_alim_m"] = d_alim
+    df["nb_commerces_500m"] = nb_comm
+    df["score_commodites_500m"] = np.round(np.clip(nb_comm * 1.2 + nb_bus * 0.8, 0, 20), 1)
+    return df
+
+
+def features_surface_et_structure(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Capture l'effet dégressif non linéaire du prix/m² selon la surface et
+    ajoute des ratios structurels clés.
+    """
+    df = df.copy()
+    surf = pd.to_numeric(df["surface_m2"], errors="coerce").astype(float).clip(lower=9.0)
+    pieces = pd.to_numeric(df["pieces"], errors="coerce").astype(float).clip(lower=1.0)
+    chambres = pd.to_numeric(df["nbr_chambres"], errors="coerce").astype(float)
+    etage = pd.to_numeric(df["etage"], errors="coerce").astype(float)
+    annee = pd.to_numeric(df["annee_construction"], errors="coerce").astype(float)
+
+    df["log_surface"] = np.round(np.log(surf), 4)
+    df["sqrt_surface"] = np.round(np.sqrt(surf), 3)
+    df["inv_surface"] = np.round(1.0 / surf, 5)
+    df["surface_par_piece"] = np.round(surf / pieces.fillna(2.5), 1)
+    df["ratio_chambres"] = np.round(chambres.fillna(1.0) / pieces.fillna(2.5), 2)
+    df["age_bien"] = np.where(np.isfinite(annee), 2026.0 - annee, np.nan)
+    df["est_rdc"] = np.where(etage == 0.0, 1, 0)
+    asc = pd.to_numeric(df.get("txt_ascenseur", pd.Series(0, index=df.index)), errors="coerce").fillna(0.0).astype(float)
+    df["etage_eleve_sans_ascenseur"] = np.where((etage >= 3.0) & (asc == 0.0), 1, 0)
+
+    # Surface relative par rapport au marché du même type de bien
+    med_par_type = df.groupby("type_bien")["surface_m2"].transform("median")
+    df["surface_relative_marche"] = np.round(surf / med_par_type.replace(0, np.nan), 3)
+
+    # Loi Carrez vs surface utile / au sol
+    desc_l = df["description"].fillna("").astype(str).str.lower()
+    m_carrez = desc_l.str.extract(r"(?:loi\s+)?carrez\s*[:de]*\s*(\d{2,3}(?:[.,]\d{1,2})?)\s*m", expand=False)
+    m_utile = desc_l.str.extract(r"(?:surface\s+utile|au\s+sol)\s*[:de]*\s*(\d{2,3}(?:[.,]\d{1,2})?)\s*m", expand=False)
+    surf_carrez = pd.to_numeric(m_carrez.str.replace(",", ".", regex=False), errors="coerce")
+    surf_utile = pd.to_numeric(m_utile.str.replace(",", ".", regex=False), errors="coerce")
+    est_mention_carrez = desc_l.str.contains(r"\bcarrez\b", regex=True).astype(int)
+
+    df["est_mention_carrez"] = est_mention_carrez
+    df["surface_carrez_m2"] = np.where(
+        surf_carrez.notna() & (surf_carrez >= 9.0),
+        surf_carrez,
+        np.where((df["type_bien"].astype(str) == "flat") & (est_mention_carrez == 1), surf, np.nan),
+    )
+    df["surface_utile_m2"] = np.where(surf_utile.notna() & (surf_utile >= 9.0), surf_utile, surf)
+    prix_num = pd.to_numeric(df["prix"], errors="coerce")
+    df["prix_m2_carrez"] = np.round(prix_num / pd.to_numeric(df["surface_carrez_m2"], errors="coerce").replace(0, np.nan), 0)
+    df["prix_m2_utile"] = np.round(prix_num / pd.to_numeric(df["surface_utile_m2"], errors="coerce").clip(lower=9.0), 0)
+
+    # Flag communes peu représentées (Saint-Benoît, Biard, Vouneuil-sous-Biard, etc.)
+    if "ville" in df.columns:
+        ville_clean = df["ville"].fillna("Poitiers").astype(str).str.strip()
+        counts_v = ville_clean.map(ville_clean.value_counts())
+        df["commune_nb_annonces"] = counts_v.fillna(0).astype(int)
+        df["commune_donnees_limitees"] = np.where(df["commune_nb_annonces"] < 15, 1, 0)
+    else:
+        df["commune_nb_annonces"] = len(df)
+        df["commune_donnees_limitees"] = 0
+    return df
+
+
+def estimer_cout_travaux(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Estimateur de coût des travaux en 3 couches (utilisable directement comme feature dans X) :
+    1. Détection par postes (Texte + DPE + Année + LLM) :
+       - `trav_rafraichissement`, `trav_cuisine_sdb`, `trav_menuiseries`,
+         `trav_elec_plomberie`, `trav_gros_oeuvre`
+    2. Chiffrage paramétrique marché Poitiers/Vienne selon surface & type de bien
+    3. Sorties numériques : `cout_travaux_min_euro`, `cout_travaux_max_euro`,
+       `cout_travaux_estime_euro`, `cout_travaux_m2`, `postes_travaux`
+    """
+    df = df.copy()
+    desc = df["description"].fillna("").str.lower()
+    dpe = df["dpe"].fillna("").astype(str).str.upper()
+    surf = pd.to_numeric(df["surface_m2"], errors="coerce").fillna(60.0)
+    est_maison = df["type_bien"].astype(str) == "house"
+    llm_trav = pd.to_numeric(df.get("llm_travaux_score", 0), errors="coerce").fillna(0)
+
+    # Couche 1 : Détection des postes
+    t_raf = (
+        desc.str.contains(r"rafra[iî]chir|rafra[iî]chissement|quelques\s+travaux|peinture", regex=True)
+        | (llm_trav == 1)
+    ).astype(int)
+    t_cui = desc.str.contains(
+        r"cuisine\s+[àa]\s+(?:cr[ée]er|am[ée]nager|refaire)|salle\s+de\s+bain\s+[àa]\s+refaire",
+        regex=True,
+    ).astype(int)
+    t_men = desc.str.contains(r"simple\s+vitrage|menuiserie[s]?\s+[àa]\s+changer", regex=True).astype(int)
+    t_el = desc.str.contains(
+        r"[ée]lectricit[ée]\s+[àa]\s+refaire|remettre\s+aux\s+normes|mise\s+aux\s+normes|plomberie",
+        regex=True,
+    ).astype(int)
+    t_gros = (
+        desc.str.contains(
+            r"enti[èe]rement\s+[àa]\s+r[ée]nover|r[ée]novation\s+compl[èe]te|gros\s+travaux|toiture|charpente",
+            regex=True,
+        )
+        | (llm_trav >= 3)
+    ).astype(int)
+    t_isol = dpe.isin(["F", "G"]).astype(int)
+    t_toit_fac = desc.str.contains(r"toiture|charpente|ravalement|fa[çc]ade\s+[àa]\s+refaire", regex=True).astype(int)
+    t_chauf = desc.str.contains(r"chaudi[èe]re\s+[àa]\s+changer|isolation|combles|humidit[ée]", regex=True).astype(int)
+    annee_c = pd.to_numeric(df.get("annee_construction"), errors="coerce")
+
+    # Si l'annonce dit "à rénover" / llm_trav >= 2 sans préciser le poste, on active rafraîchissement + élec/cuisine
+    gen_renov = (
+        desc.str.contains(r"[àa]\s+r[ée]nover|r[ée]novation\s+[àa]\s+pr[ée]voir", regex=True)
+        | (llm_trav >= 2)
+    )
+    t_raf = np.where(gen_renov, 1, t_raf)
+
+    # Couche 2 : Barème €/m² + forfaits Poitiers/Vienne
+    cout = np.zeros(len(df), dtype=float)
+    cout = np.where(t_raf == 1, cout + surf * 220.0, cout)
+    cout = np.where(t_cui == 1, cout + 11000.0, cout)
+    cout = np.where(t_men == 1, cout + surf * 130.0, cout)
+    cout = np.where(t_el == 1, cout + surf * 140.0, cout)
+    cout = np.where(t_isol == 1, cout + np.where(est_maison, surf * 240.0, surf * 140.0), cout)
+    cout = np.where(t_toit_fac == 1, cout + np.where(est_maison, surf * 280.0, 5500.0), cout)
+    cout = np.where(t_chauf == 1, cout + 7500.0, cout)
+    # Règle d'ancienneté : bien d'avant 1975 classé E/F/G sans mention de rénovation
+    ancien_passoire = (annee_c.notna()) & (annee_c < 1975) & dpe.isin(["E", "F", "G"]) & (cout < surf * 250.0)
+    cout = np.where(ancien_passoire, np.maximum(cout, surf * 320.0), cout)
+    # Rénovation lourde : remplace les petits postes pour éviter le double comptage
+    cout = np.where(t_gros == 1, np.maximum(cout, surf * 1050.0), cout)
+    # Si llm_trav == 2 sans gros œuvre, plancher à 420 €/m²
+    cout = np.where((llm_trav == 2) & (t_gros == 0), np.maximum(cout, surf * 420.0), cout)
+    # DPE E : léger poste énergétique
+    cout = np.where((dpe == "E") & (cout == 0), surf * 80.0, cout)
+    # Embeddings photos OpenCLIP : détection visuelle de travaux non mentionnés dans le texte
+    clip_trav = pd.to_numeric(df.get("clip_score_travaux"), errors="coerce").fillna(0.0)
+    clip_detect = (clip_trav >= 0.65) & (cout < surf * 280.0)
+    cout = np.where(clip_detect, np.maximum(cout, surf * 280.0), cout)
+
+    df["trav_rafraichissement"] = t_raf
+    df["trav_cuisine_sdb"] = t_cui
+    df["trav_menuiseries"] = t_men
+    df["trav_elec_plomberie"] = t_el
+    df["trav_gros_oeuvre"] = np.maximum(t_gros, t_isol)
+
+    df["cout_travaux_estime_euro"] = np.round(cout, 0)
+    df["cout_travaux_min_euro"] = np.round(cout * 0.78, 0)
+    df["cout_travaux_max_euro"] = np.round(cout * 1.25, 0)
+    df["cout_travaux_m2"] = np.round(cout / surf.clip(lower=1.0), 0)
+
+    t_gros_arr = np.asarray(t_gros)
+    t_raf_arr = np.asarray(t_raf)
+    t_cui_arr = np.asarray(t_cui)
+    t_men_arr = np.asarray(t_men)
+    t_el_arr = np.asarray(t_el)
+    t_isol_arr = np.asarray(t_isol)
+    dpe_arr = dpe.to_numpy()
+
+    libelles = []
+    for i in range(len(df)):
+        p = []
+        if t_gros_arr[i]:
+            p.append("Rénovation lourde")
+        else:
+            if t_raf_arr[i]:
+                p.append("Rafraîchissement")
+            if t_cui_arr[i]:
+                p.append("Cuisine/SDB")
+            if t_men_arr[i]:
+                p.append("Menuiseries")
+            if t_el_arr[i]:
+                p.append("Élec./Normes")
+        if t_isol_arr[i]:
+            p.append(f"Isolation DPE {dpe_arr[i]}")
+        elif dpe_arr[i] == "E" and not p:
+            p.append("Optimisation DPE E")
+        if bool(clip_detect.iloc[i]) if hasattr(clip_detect, "iloc") else bool(clip_detect[i]):
+            p.append("Travaux visibles (CLIP photos)")
+        libelles.append(" + ".join(p) if p else "Aucun travaux majeur")
+    df["postes_travaux"] = libelles
+    return df
+
+
+def features_marche_historique(df: pd.DataFrame) -> pd.DataFrame:
+    """Calcule la durée en ligne et les baisses de prix pour le pouvoir de négociation."""
+    df = df.copy()
+    maintenant = pd.Timestamp.now(tz="UTC")
+    if "date_premiere_vue" in df.columns:
+        d_prem = pd.to_datetime(df["date_premiere_vue"], utc=True, errors="coerce")
+        duree = (maintenant - d_prem).dt.total_seconds() / 86400.0
+        df["duree_en_ligne_jours"] = np.round(duree.fillna(0.0).clip(lower=0.0), 1)
+    else:
+        df["duree_en_ligne_jours"] = 0.0
+
+    if "evolution_prix_euro" in df.columns:
+        evol = pd.to_numeric(df["evolution_prix_euro"], errors="coerce").fillna(0.0)
+        prix_init = pd.to_numeric(df.get("prix_initial", df["prix"]), errors="coerce").replace(0, np.nan)
+        df["a_baisse_prix"] = (evol < 0).astype(int)
+        df["amplitude_baisse_pct"] = np.round(np.where(evol < 0, (-evol / prix_init) * 100.0, 0.0), 1)
+    else:
+        df["a_baisse_prix"] = 0
+        df["amplitude_baisse_pct"] = 0.0
+    return df
+
+
+def telecharger_ou_charger_dvf(dvf_path: str = CHEMIN_DVF_CSV, verbose: bool = True) -> pd.DataFrame | None:
+    """
+    Charge le fichier local des ventes notariées DVF de Grand Poitiers (12 communes),
     ou le télécharge automatiquement depuis data.gouv.fr (Etalab geo-dvf 2023-2025).
     """
+    os.makedirs(os.path.dirname(dvf_path) or "csv", exist_ok=True)
     if os.path.exists(dvf_path) and os.path.getsize(dvf_path) > 1000:
         try:
             return pd.read_csv(dvf_path, low_memory=False)
         except Exception:
             pass
 
-    urls = [
-        "https://files.data.gouv.fr/geo-dvf/latest/csv/2025/communes/86/86194.csv",
-        "https://files.data.gouv.fr/geo-dvf/latest/csv/2024/communes/86/86194.csv",
-        "https://files.data.gouv.fr/geo-dvf/latest/csv/2023/communes/86/86194.csv",
-    ]
     dfs = []
-    for u in urls:
-        try:
-            req = urllib.request.Request(u, headers={"User-Agent": "Mozilla/5.0"})
-            with urllib.request.urlopen(req, timeout=8) as resp:
-                sub = pd.read_csv(resp, low_memory=False)
-                dfs.append(sub)
-        except Exception:
-            continue
+    for code_insee in CODES_INSEE_GRAND_POITIERS:
+        for annee in ("2025", "2024", "2023"):
+            u = f"https://files.data.gouv.fr/geo-dvf/latest/csv/{annee}/communes/86/{code_insee}.csv"
+            try:
+                req = urllib.request.Request(u, headers={"User-Agent": "Mozilla/5.0"})
+                with urllib.request.urlopen(req, timeout=6) as resp:
+                    sub = pd.read_csv(resp, low_memory=False)
+                    dfs.append(sub)
+            except Exception:
+                continue
 
     if dfs:
         dvf_all = pd.concat(dfs, ignore_index=True).drop_duplicates()
         dvf_all.to_csv(dvf_path, index=False)
         if verbose:
-            print(f"Fichier DVF Notaires téléchargé ({len(dvf_all)} lignes) -> {dvf_path}")
+            print(f"Fichier DVF Grand Poitiers téléchargé ({len(dvf_all)} lignes) -> {dvf_path}")
         return dvf_all
+
+    # Repli local si hors-ligne sur l'ancien fichier Poitiers
+    if os.path.exists(CHEMIN_DVF_POITIERS_LEGACY):
+        return pd.read_csv(CHEMIN_DVF_POITIERS_LEGACY, low_memory=False)
     return None
 
 
 def nettoyer_dvf(dvf: pd.DataFrame) -> pd.DataFrame:
-    """Filtre les ventes notariées d'appartements et maisons à Poitiers sans ventes multi-lots complexes."""
+    """Filtre les ventes notariées d'appartements et maisons sur Grand Poitiers."""
     dvf = dvf[
         (dvf["nature_mutation"] == "Vente")
         & (dvf["type_local"].isin(["Appartement", "Maison"]))
     ].copy()
-    # On garde les mutations à 1 ligne de bâti principal (évite les ventes d'immeubles entiers)
     dvf = dvf[dvf.groupby("id_mutation")["id_mutation"].transform("size") <= 2]
     dvf = dvf.dropna(subset=["valeur_fonciere", "surface_reelle_bati", "latitude", "longitude"])
     dvf = dvf[(dvf["surface_reelle_bati"] >= 14) & (dvf["surface_reelle_bati"] <= 400)]
     dvf["pm2"] = dvf["valeur_fonciere"] / dvf["surface_reelle_bati"]
     dvf = dvf[dvf["pm2"].between(700, 6500)].copy()
+    if "date_mutation" in dvf.columns:
+        dvf["annee_mut"] = pd.to_datetime(dvf["date_mutation"], errors="coerce").dt.year
+    else:
+        dvf["annee_mut"] = np.nan
     return dvf
 
 
+def _tranche_surface(s: pd.Series) -> pd.Series:
+    return pd.cut(
+        s,
+        bins=[0, 35, 55, 80, 110, 1000],
+        labels=["T1_lt35", "T2_35_55", "T3_55_80", "T4_80_110", "T5_gt110"],
+    ).astype(str)
+
+
 def prix_m2_voisinage(
-    df: pd.DataFrame, dvf: pd.DataFrame, k: int = 25, rayon_m: int = 800
+    df: pd.DataFrame, dvf: pd.DataFrame, k: int = 40, rayon_m: int = 800
 ) -> pd.DataFrame:
     """
-    Calcule pour chaque annonce :
-    - `pm2_voisinage` : médiane du prix/m² des ventes réelles notariées (DVF) du MÊME TYPE
-      (Appartement ou Maison) dans un rayon de `rayon_m` mètres.
-    - `nb_ventes_dvf` : nombre de ventes notariées comparables trouvées autour du bien.
+    Exploitation avancée des ventes notariées DVF :
+    - `pm2_voisinage`           : médiane €/m² des ventes comparables dans les 800 m
+    - `nb_ventes_dvf`           : nombre de ventes notariées comparables dans les 800 m
+    - `pm2_dvf_pondere_dist`    : moyenne pondérée par 1 / (distance_m + 50)
+    - `pm2_dvf_taille_proche`   : médiane €/m² des ventes de surface similaire (±30%)
+    - `pm2_dvf_tranche_surface` : médiane €/m² DVF de la même tranche de surface (dégressivité réelle)
+    - `pm2_dvf_dispersion`      : écart-type €/m² dans le voisinage (hétérogénéité du secteur)
+    - `tendance_dvf_pct`        : évolution des prix/m² entre anciennes années et année récente
     """
     dvf_clean = nettoyer_dvf(dvf)
-    out_pm2 = pd.Series(np.nan, index=df.index, name="pm2_voisinage")
-    out_nb = pd.Series(0, index=df.index, name="nb_ventes_dvf")
+    dvf_clean["tranche_s"] = _tranche_surface(dvf_clean["surface_reelle_bati"])
+    df_tranches = _tranche_surface(pd.to_numeric(df["surface_m2"], errors="coerce").fillna(60.0))
+
+    cols_out = {
+        "pm2_voisinage": pd.Series(np.nan, index=df.index),
+        "nb_ventes_dvf": pd.Series(0, index=df.index),
+        "pm2_dvf_pondere_dist": pd.Series(np.nan, index=df.index),
+        "pm2_dvf_taille_proche": pd.Series(np.nan, index=df.index),
+        "pm2_dvf_tranche_surface": pd.Series(np.nan, index=df.index),
+        "pm2_dvf_dispersion": pd.Series(np.nan, index=df.index),
+        "tendance_dvf_pct": pd.Series(0.0, index=df.index),
+    }
 
     mapping_type = {"flat": "Appartement", "programme": "Appartement", "house": "Maison"}
 
     for code_annonce, type_dvf in mapping_type.items():
-        sub_dvf = dvf_clean[dvf_clean["type_local"] == type_dvf]
+        sub_dvf = dvf_clean[dvf_clean["type_local"] == type_dvf].reset_index(drop=True)
         if len(sub_dvf) < 5:
             continue
         med_globale_type = float(sub_dvf["pm2"].median())
+        med_par_tranche = sub_dvf.groupby("tranche_s")["pm2"].median().to_dict()
 
         mask_df = df["type_bien"] == code_annonce
-        mask_gps = mask_df & df[["latitude", "longitude"]].notna().all(axis=1)
+        if not mask_df.any():
+            continue
 
+        # Attribution de la médiane DVF par tranche de surface (même sans GPS)
+        cols_out["pm2_dvf_tranche_surface"].loc[mask_df] = (
+            df_tranches.loc[mask_df].map(med_par_tranche).fillna(med_globale_type).round(0)
+        )
+
+        mask_gps = mask_df & df[["latitude", "longitude"]].notna().all(axis=1)
         if mask_gps.any():
             tree = BallTree(np.radians(sub_dvf[["latitude", "longitude"]].to_numpy()), metric="haversine")
             pts = np.radians(df.loc[mask_gps, ["latitude", "longitude"]].to_numpy())
             dist, idx = tree.query(pts, k=min(k, len(sub_dvf)))
-            dans_rayon = (dist * 6_371_000) <= rayon_m
-            pm2_voisins = np.where(dans_rayon, sub_dvf["pm2"].to_numpy()[idx], np.nan)
+            dist_m = dist * 6_371_000.0
+            dans_rayon = dist_m <= rayon_m
+            dans_rayon_elargi = dist_m <= 1500.0
 
+            pm2_arr = sub_dvf["pm2"].to_numpy()[idx]
+            surf_dvf_arr = sub_dvf["surface_reelle_bati"].to_numpy()[idx]
+            annee_dvf_arr = sub_dvf["annee_mut"].to_numpy()[idx]
+
+            pm2_voisins = np.where(dans_rayon, pm2_arr, np.nan)
             with np.errstate(all="ignore"):
                 med_locale = np.nanmedian(pm2_voisins, axis=1)
+                std_locale = np.nanstd(pm2_voisins, axis=1)
             nb_local = np.sum(dans_rayon, axis=1)
 
-            med_locale = np.where(np.isnan(med_locale), med_globale_type, med_locale)
-            out_pm2.loc[mask_gps] = np.round(med_locale, 0)
-            out_nb.loc[mask_gps] = nb_local
+            # Moyenne pondérée par 1 / (d + 50m)
+            poids = np.where(dans_rayon, 1.0 / (dist_m + 50.0), 0.0)
+            somme_poids = np.sum(poids, axis=1)
+            pm2_pond = np.where(
+                somme_poids > 0,
+                np.sum(np.where(dans_rayon, pm2_arr * poids, 0.0), axis=1) / np.maximum(somme_poids, 1e-9),
+                med_globale_type,
+            )
 
-        # Fallback médiane communale DVF pour les biens sans coordonnées GPS
+            # Médiane sur biens de surface proche (±30%)
+            surf_annonces = pd.to_numeric(df.loc[mask_gps, "surface_m2"], errors="coerce").to_numpy()[:, None]
+            proche_taille = dans_rayon_elargi & (np.abs(surf_dvf_arr - surf_annonces) <= 0.30 * surf_annonces)
+            pm2_taille = np.where(proche_taille, pm2_arr, np.nan)
+            with np.errstate(all="ignore"):
+                med_taille = np.nanmedian(pm2_taille, axis=1)
+
+            # Tendance temporelle DVF dans les 1500m (dernière année vs années précédentes)
+            max_an = np.nanmax(sub_dvf["annee_mut"]) if sub_dvf["annee_mut"].notna().any() else np.nan
+            tend_arr = np.zeros(len(surf_annonces))
+            if pd.notna(max_an):
+                rec_mask = dans_rayon_elargi & (annee_dvf_arr >= max_an)
+                anc_mask = dans_rayon_elargi & (annee_dvf_arr < max_an)
+                with np.errstate(all="ignore"):
+                    med_rec = np.nanmedian(np.where(rec_mask, pm2_arr, np.nan), axis=1)
+                    med_anc = np.nanmedian(np.where(anc_mask, pm2_arr, np.nan), axis=1)
+                valid_t = np.isfinite(med_rec) & np.isfinite(med_anc) & (med_anc > 0)
+                tend_arr = np.where(valid_t, np.clip((med_rec - med_anc) / med_anc * 100.0, -25.0, 25.0), 0.0)
+
+            med_locale = np.where(np.isnan(med_locale), med_globale_type, med_locale)
+            med_taille = np.where(np.isnan(med_taille), med_locale, med_taille)
+            std_locale = np.where(np.isnan(std_locale), 300.0, std_locale)
+
+            cols_out["pm2_voisinage"].loc[mask_gps] = np.round(med_locale, 0)
+            cols_out["nb_ventes_dvf"].loc[mask_gps] = nb_local
+            cols_out["pm2_dvf_pondere_dist"].loc[mask_gps] = np.round(pm2_pond, 0)
+            cols_out["pm2_dvf_taille_proche"].loc[mask_gps] = np.round(med_taille, 0)
+            cols_out["pm2_dvf_dispersion"].loc[mask_gps] = np.round(std_locale, 0)
+            cols_out["tendance_dvf_pct"].loc[mask_gps] = np.round(tend_arr, 1)
+
         mask_sans_gps = mask_df & (~mask_gps)
         if mask_sans_gps.any():
-            out_pm2.loc[mask_sans_gps] = round(med_globale_type, 0)
+            cols_out["pm2_voisinage"].loc[mask_sans_gps] = round(med_globale_type, 0)
+            cols_out["pm2_dvf_pondere_dist"].loc[mask_sans_gps] = round(med_globale_type, 0)
+            cols_out["pm2_dvf_taille_proche"].loc[mask_sans_gps] = round(med_globale_type, 0)
 
-    return pd.DataFrame({"pm2_voisinage": out_pm2, "nb_ventes_dvf": out_nb})
+    return pd.DataFrame(cols_out)
 
 
-def charger_et_preparer(csv_path: str = "annonces.csv", verbose: bool = True) -> pd.DataFrame:
-    """Pipeline unique : Nettoyage -> Doublons -> Texte -> LLM/Heuristique -> Géo -> DVF Notaires."""
-    df = pd.read_csv(csv_path)
-    df = nettoyer_annonces(df, verbose=verbose)
+def features_iris_spatial_join(df: pd.DataFrame, geojson_path: str = CHEMIN_IRIS_GEOJSON) -> pd.DataFrame:
+    """
+    Jointure spatiale GPS (Point-in-Polygon) sur les 67 polygones GeoJSON officiels
+    des îlots IRIS de Grand Poitiers :
+    - Attribue `iris_code` et `iris_name` à chaque annonce selon ses coordonnées `(latitude, longitude)`.
+    """
+    df = df.copy()
+    df["iris_code"] = "inconnu"
+    df["iris_name"] = "Inconnu"
+    if not os.path.exists(geojson_path) or df.empty:
+        return df
+
+    try:
+        from matplotlib.path import Path as MplPath
+        with open(geojson_path, "r", encoding="utf-8") as f:
+            gj = json.load(f)
+    except Exception:
+        return df
+
+    polygones = []
+    for feat in gj.get("features", []):
+        props = feat.get("properties", {})
+        i_code = (props.get("iris_code") or ["inconnu"])[0]
+        i_name = (props.get("iris_name") or ["Inconnu"])[0]
+        geom = feat.get("geometry") or {}
+        gtype = geom.get("type")
+        coords = geom.get("coordinates") or []
+        rings = []
+        if gtype == "Polygon" and coords:
+            rings.append(coords[0])
+        elif gtype == "MultiPolygon":
+            for poly in coords:
+                if poly:
+                    rings.append(poly[0])
+        for ring in rings:
+            if len(ring) >= 3:
+                arr = np.asarray(ring, dtype=float)
+                polygones.append((i_code, i_name, MplPath(arr[:, :2])))
+
+    if not polygones:
+        return df
+
+    mask_gps = df[["latitude", "longitude"]].notna().all(axis=1)
+    if not mask_gps.any():
+        return df
+
+    # Attention : GeoJSON est en (lon, lat)
+    pts = df.loc[mask_gps, ["longitude", "latitude"]].to_numpy(dtype=float)
+    codes_out = np.full(len(pts), "inconnu", dtype=object)
+    names_out = np.full(len(pts), "Inconnu", dtype=object)
+    non_assignes = np.ones(len(pts), dtype=bool)
+
+    for i_code, i_name, path_obj in polygones:
+        if not non_assignes.any():
+            break
+        dedans = path_obj.contains_points(pts[non_assignes])
+        if dedans.any():
+            idx_glob = np.where(non_assignes)[0][dedans]
+            codes_out[idx_glob] = i_code
+            names_out[idx_glob] = i_name
+            non_assignes[idx_glob] = False
+
+    df.loc[mask_gps, "iris_code"] = codes_out
+    df.loc[mask_gps, "iris_name"] = names_out
+    return df
+
+
+# --------------------------------------------------------------------------
+# 4. Pipeline Feature Engineering -> Tables PostgreSQL & CSV
+# --------------------------------------------------------------------------
+def preparer_df_brut(df_brut: pd.DataFrame, verbose: bool = True, avec_photos: bool = True) -> pd.DataFrame:
+    """Applique tout le Feature Engineering (Nettoyage 86, Doublons, Texte, LLM, Géo, IRIS GPS, Open Data, Surface, Travaux, DVF, Photos)."""
+    df = nettoyer_annonces(df_brut, verbose=verbose, exclure_atypiques=True)
     df = marquer_doublons(df, verbose=verbose)
     df = garder_un_doublon(df)
     df = features_texte(df)
     df = enrichir_avec_ollama(df, utiliser_api_ollama=True)
     df = features_geo(df)
+    df = features_iris_spatial_join(df)
+    df = features_open_data_grand_poitiers(df)
+    df = features_surface_et_structure(df)
+    if avec_photos:
+        try:
+            import Photos
+            df = Photos.extraire_features_visuelles(df, utiliser_vlm=False)
+        except Exception:
+            pass
+    df = estimer_cout_travaux(df)
+    df = features_marche_historique(df)
 
-    dvf = telecharger_ou_charger_dvf("dvf_poitiers.csv", verbose=verbose)
+    # Valeur locative estimée & rendement brut / net (référentiel loyers Grand Poitiers / ANIL)
+    surf_loc = pd.to_numeric(df["surface_m2"], errors="coerce").clip(lower=12.0)
+    est_m = df["type_bien"].astype(str) == "house"
+    base_loyer_m2 = np.where(
+        est_m,
+        10.2,
+        np.where(surf_loc <= 32, 14.2, np.where(surf_loc <= 55, 12.1, 10.6)),
+    )
+    rev_med = pd.to_numeric(df.get("revenu_median_secteur", 21500), errors="coerce").fillna(21500.0)
+    coef_secteur = np.clip(rev_med / 21500.0, 0.88, 1.15)
+    df["loyer_m2_estime"] = np.round(base_loyer_m2 * coef_secteur, 2)
+    df["loyer_mensuel_estime"] = np.round(df["loyer_m2_estime"] * surf_loc, 0)
+    prix_safe = pd.to_numeric(df["prix"], errors="coerce").replace(0, np.nan)
+    trav_loc = pd.to_numeric(df["cout_travaux_estime_euro"], errors="coerce").fillna(0.0)
+    df["rendement_brut_pct"] = np.round((df["loyer_mensuel_estime"] * 12.0) / prix_safe * 100.0, 2)
+    df["rendement_net_estime_pct"] = np.round((df["loyer_mensuel_estime"] * 10.2) / (prix_safe + trav_loc) * 100.0, 2)
+
+    dvf = telecharger_ou_charger_dvf(CHEMIN_DVF_CSV, verbose=verbose)
     if dvf is not None and len(dvf) > 0:
         dvf_feats = prix_m2_voisinage(df, dvf)
-        df["pm2_voisinage"] = dvf_feats["pm2_voisinage"]
-        df["nb_ventes_dvf"] = dvf_feats["nb_ventes_dvf"]
+        for col in dvf_feats.columns:
+            df[col] = dvf_feats[col]
+        surf = pd.to_numeric(df["surface_m2"], errors="coerce").fillna(0.0)
+        pm2_ref = df["pm2_dvf_tranche_surface"].fillna(df["pm2_voisinage"])
+        df["valeur_dvf_ajustee_taille"] = np.round(surf * pm2_ref, 0)
+        df["valeur_dvf_nette_travaux"] = np.round(df["valeur_dvf_ajustee_taille"] - df["cout_travaux_estime_euro"], 0)
+
     return df
 
 
-# --------------------------------------------------------------------------
-# 4. Modèle, Prédictions, Comparaison DVF Notaires & Taux de Négociation
-# --------------------------------------------------------------------------
-ORDRE_DPE = {c: i for i, c in enumerate("ABCDEFG", start=1)}
-CATEGORIELLES = ["quartier", "reseau", "type_bien"]
+def charger_et_preparer(csv_path: str = os.path.join("csv", "annonces.csv"), verbose: bool = True) -> pd.DataFrame:
+    """Lit les offres récentes (PostgreSQL ou dossier csv/) et applique le Feature Engineering."""
+    try:
+        import DB
+        df = DB.lire_table_ou_csv(DB.TABLE_RECENT_BRUT, csv_path)
+        if df.empty:
+            df = pd.read_csv(csv_path)
+    except Exception:
+        df = pd.read_csv(csv_path)
+    return preparer_df_brut(df, verbose=verbose)
 
 
 def construire_X_y(df: pd.DataFrame):
+    """
+    Extrait la matrice X des variables explicatives (cœur propre sans bruit/redondance)
+    et le vecteur cible y (prix) depuis une table après Feature Engineering.
+    """
+    df = supprimer_colonnes_prediction(df)
     df = df[df["prix"].notna() & (df["prix"] > 0)].copy()
     df["dpe_num"] = df["dpe"].map(ORDRE_DPE)
-    df["ges_num"] = df["ges"].map(ORDRE_DPE)
     for c in CATEGORIELLES:
         if c not in df.columns:
             df[c] = "inconnu"
         else:
-            df[c] = df[c].fillna("inconnu")
+            df[c] = df[c].fillna("inconnu").astype(str)
 
     numeriques = [
-        "surface_m2", "pieces", "nbr_chambres", "etage", "annee_construction",
-        "latitude", "longitude", "dist_centre_km", "dist_gare_km",
-        "dpe_num", "ges_num", "txt_longueur", "surface_ext_m2", "charges_annuelles",
-        "llm_etat_score", "llm_travaux_score", "llm_note_offre",
-    ] + [c for c in df.columns if c.startswith("txt_") and c != "txt_longueur"]
-    if "pm2_voisinage" in df.columns:
-        numeriques.append("pm2_voisinage")
+        # Structure & Surface (sans doublons monotones log/sqrt/inv)
+        "surface_m2", "pieces", "surface_par_piece", "surface_relative_marche",
+        "est_mention_carrez", "etage", "annee_construction", "age_bien", "dpe_num",
+        # Localisation, Mobilité, Commerces & Open Data GPS (IRIS / QPV conservé / Pôles)
+        "latitude", "dist_centre_km", "dist_gare_km", "dist_campus_km",
+        "dist_arret_bus_m", "nb_arrets_bus_400m",
+        "dist_commerce_alim_m", "nb_commerces_500m", "score_commodites_500m",
+        "est_en_qpv",
+        # Texte & LLM (sans llm_travaux_score / txt_standing bruit)
+        "txt_longueur", "surface_ext_m2", "charges_annuelles",
+        "llm_etat_score", "llm_note_offre",
+        "txt_piscine", "txt_a_renover", "txt_jardin", "txt_terrasse",
+        "txt_parking", "txt_cave", "txt_lumineux", "txt_pac",
+        "txt_immeuble",
+        # Postes travaux, Valeur locative & Notaires DVF
+        "trav_rafraichissement", "trav_cuisine_sdb", "trav_menuiseries", "trav_elec_plomberie",
+        "loyer_m2_estime",
+        "pm2_voisinage", "pm2_dvf_tranche_surface", "pm2_dvf_pondere_dist",
+        "valeur_dvf_ajustee_taille", "valeur_dvf_nette_travaux",
+        # Photos : embeddings OpenCLIP (travaux/rénové) + embeddings visuels compacts sans VLM
+        "vis_contraste", "vis_saturation", "vis_etat_vlm",
+        "clip_score_travaux", "clip_score_renove",
+        "vis_emb_0", "vis_emb_1", "vis_emb_2", "vis_emb_3", "vis_emb_4",
+    ]
 
-    numeriques = [c for c in numeriques if c in df.columns]
+    numeriques = list(dict.fromkeys(
+        c for c in numeriques
+        if c in df.columns
+        and c not in COLONNES_PREDICTION
+        and c != "prix"
+        and pd.to_numeric(df[c], errors="coerce").notna().sum() >= 2
+    ))
     X = df[numeriques + CATEGORIELLES].copy()
     X[numeriques] = X[numeriques].astype(float)
     return X, df["prix"].astype(float)
 
 
-def construire_modele() -> TransformedTargetRegressor:
-    cv_interne = KFold(n_splits=5, shuffle=True, random_state=0)
-    prepa = ColumnTransformer(
-        [("cat", TargetEncoder(target_type="continuous", cv=cv_interne), CATEGORIELLES)],
-        remainder="passthrough",
-    )
-    modele = Pipeline([
-        ("prepa", prepa),
-        ("gbm", HistGradientBoostingRegressor(
-            max_depth=3, learning_rate=0.05, max_iter=300, min_samples_leaf=8, random_state=0)),
-    ])
-    return TransformedTargetRegressor(regressor=modele, func=np.log, inverse_func=np.exp)
-
-
-def estimer_negociation(df_res: pd.DataFrame) -> pd.DataFrame:
+def construire_tables_features(
+    df_hist_brut: pd.DataFrame | None = None,
+    verbose: bool = False,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
     """
-    Calcule pour chaque bien :
-    - `prix_notaire_dvf` : valeur de marché basée sur les actes notariés DVF du voisinage
-    - `ecart_vs_notaire_pct` : surcote/décote du prix affiché par rapport aux ventes notariées réelles
-    - `taux_nego_estime_pct` : marge de négociation réaliste (entre 1.5% et 18%) tenant compte :
-        1) du taux de base Poitiers (3.5% appartements, 5.5% maisons),
-        2) de la surcote éventuelle vs IA et vs Notaires DVF,
-        3) du malus DPE (passoire F/G : +3.5%, DPE E : +1.5%),
-        4) du niveau de travaux détecté par le LLM (+1.5% à +4%).
-    - `prix_cible_nego` : prix d'offre recommandé après négociation.
+    ÉTAPE 1 — FEATURE ENGINEERING :
+    - Lit la table brute historique (`offres_historique_brut`)
+    - Applique le Feature Engineering complet (nettoyage, dédoublonnage, regex texte, LLM Ollama, géo, DVF Notaires)
+    - Sauvegarde les deux tables APRÈS Feature Engineering (SANS aucune colonne de prédiction) :
+        • `offres_historique_features` (`csv/annonces_historique_features.csv`)
+        • `offres_recentes_features`   (`csv/annonces_recentes_features.csv`)
     """
-    df_res = df_res.copy()
+    import DB
 
-    if "pm2_voisinage" in df_res.columns and df_res["pm2_voisinage"].notna().any():
-        df_res["pm2_notaire_dvf"] = df_res["pm2_voisinage"].fillna(df_res["pm2_predit"])
+    if df_hist_brut is None:
+        df_hist_brut = DB.lire_table_ou_csv(DB.TABLE_HIST_BRUT, DB.CSV_HIST_BRUT)
+        if df_hist_brut.empty:
+            df_hist_brut = DB.lire_table_ou_csv(DB.TABLE_RECENT_BRUT, DB.CSV_RECENT_BRUT)
+
+    df_hist_feat = supprimer_colonnes_prediction(preparer_df_brut(df_hist_brut, verbose=verbose))
+    if "est_active" in df_hist_feat.columns:
+        df_recent_feat = df_hist_feat[df_hist_feat["est_active"] == True].copy()  # noqa: E712
     else:
-        # Si DVF non chargé, repli sur -6% sous le prix affiché médian (écart moyen affiché vs signé)
-        df_res["pm2_notaire_dvf"] = np.round(df_res["pm2_predit"] * 0.94, 0)
+        df_recent_feat = df_hist_feat.copy()
 
-    df_res["prix_notaire_dvf"] = np.round(df_res["pm2_notaire_dvf"] * df_res["surface_m2"], 0)
-    df_res["ecart_vs_notaire_pct"] = np.round(
-        (df_res["prix_reel"] - df_res["prix_notaire_dvf"]) / df_res["prix_notaire_dvf"] * 100, 1
+    DB.sauvegarder_tables_features(df_hist_feat, df_recent_feat)
+    print(
+        f"[Feature Engineering] Tables de features pures générées (sans colonnes de prédiction) :\n"
+        f"  • '{DB.TABLE_HIST_FEAT}'   ({DB.CSV_HIST_FEAT}) : {len(df_hist_feat)} offres ({len(df_hist_feat.columns)} colonnes)\n"
+        f"  • '{DB.TABLE_RECENT_FEAT}' ({DB.CSV_RECENT_FEAT}) : {len(df_recent_feat)} offres actives ({len(df_recent_feat.columns)} colonnes)"
     )
-
-    # Taux de négociation de base selon le type de bien à Poitiers (observatoire 2024-2026)
-    base_nego = np.where(df_res["type_label"] == "Maison", 5.5, 3.5)
-
-    # Ajustement selon la surcote par rapport à l'estimation IA et au notaire DVF
-    surcote_ia = np.clip(df_res["ecart_pct"], -5.0, 25.0) * 0.25
-    surcote_dvf = np.clip(df_res["ecart_vs_notaire_pct"], -5.0, 25.0) * 0.15
-
-    # Ajustement énergétique DPE (levier majeur de négociation)
-    dpe_s = df_res["dpe"].fillna("").astype(str).str.upper()
-    bonus_dpe = np.where(dpe_s.isin(["F", "G"]), 3.5, np.where(dpe_s == "E", 1.5, 0.0))
-
-    # Ajustement travaux (score LLM 0 à 3)
-    trav_s = df_res.get("llm_travaux_score", pd.Series(0, index=df_res.index)).fillna(0)
-    bonus_travaux = trav_s * 1.3
-
-    taux_nego = np.clip(base_nego + surcote_ia + surcote_dvf + bonus_dpe + bonus_travaux, 1.5, 18.0)
-    df_res["taux_nego_estime_pct"] = np.round(taux_nego, 1)
-    df_res["prix_cible_nego"] = np.round(df_res["prix_reel"] * (1.0 - df_res["taux_nego_estime_pct"] / 100.0), 0)
-    df_res["economie_nego_euro"] = np.round(df_res["prix_reel"] - df_res["prix_cible_nego"], 0)
-    return df_res
-
-
-def generer_predictions_cv(df: pd.DataFrame, n_splits: int = 5) -> pd.DataFrame:
-    """Calcule les prédictions hors-échantillon (CV 5 plis), les écarts DVF et la marge de négociation."""
-    X, y = construire_X_y(df)
-    cv = KFold(n_splits=n_splits, shuffle=True, random_state=0)
-    y_pred = cross_val_predict(construire_modele(), X, y, cv=cv)
-
-    df_res = df.loc[X.index].copy()
-    df_res["prix_reel"] = np.round(y.values, 0)
-    df_res["prix_predit"] = np.round(y_pred, 0)
-    df_res["ecart_euro"] = np.round(df_res["prix_reel"] - df_res["prix_predit"], 0)
-    df_res["erreur_abs_euro"] = np.abs(df_res["ecart_euro"])
-    df_res["ecart_pct"] = np.round(
-        (df_res["prix_reel"] - df_res["prix_predit"]) / df_res["prix_predit"] * 100, 1
-    )
-    df_res["erreur_abs_pct"] = np.abs(df_res["ecart_pct"])
-    df_res["pm2_reel"] = np.round(df_res["prix_reel"] / df_res["surface_m2"], 0)
-    df_res["pm2_predit"] = np.round(df_res["prix_predit"] / df_res["surface_m2"], 0)
-    df_res["quartier_clean"] = df_res["quartier"].fillna("Inconnu")
-    df_res["type_label"] = np.where(df_res["type_bien"] == "house", "Maison", "Appartement")
-    df_res["titre_propre"] = np.where(
-        df_res["titre"].notna() & (df_res["titre"].astype(str).str.strip() != ""),
-        df_res["titre"].astype(str),
-        df_res["type_label"] + " " + df_res["surface_m2"].round(0).astype(int).astype(str) + " m²",
-    )
-    df_res = estimer_negociation(df_res)
-    return df_res
-
-
-def calculer_importances(df: pd.DataFrame, top_n: int = 12) -> pd.DataFrame:
-    """Calcule l'importance des variables (en € d'impact sur la MAE) par permutation."""
-    X, y = construire_X_y(df)
-    modele = construire_modele()
-    modele.fit(X, y)
-    perm = permutation_importance(
-        modele, X, y, n_repeats=10, random_state=0, scoring="neg_mean_absolute_error"
-    )
-    imp = pd.DataFrame({
-        "feature": X.columns,
-        "label": [LABELS_FEATURES.get(c, c) for c in X.columns],
-        "impact_euro": np.round(perm.importances_mean, 0),
-        "std_euro": np.round(perm.importances_std, 0),
-    }).sort_values("impact_euro", ascending=False)
-    return imp.head(top_n).reset_index(drop=True)
-
-
-def calculer_metriques_groupe(df_sub: pd.DataFrame) -> dict:
-    """Calcule l'ensemble des métriques de précision, d'écart DVF notaire et de marge de négociation."""
-    if len(df_sub) == 0:
-        return {}
-    y_reel = df_sub["prix_reel"].to_numpy()
-    y_pred = df_sub["prix_predit"].to_numpy()
-    err_abs = df_sub["erreur_abs_euro"].to_numpy()
-    err_pct = df_sub["erreur_abs_pct"].to_numpy()
-    surf = df_sub["surface_m2"].to_numpy()
-
-    mae = float(np.mean(err_abs))
-    med_ae = float(np.median(err_abs))
-    rmse = float(np.sqrt(np.mean((y_reel - y_pred) ** 2)))
-    mape = float(np.mean(err_pct))
-    mdape = float(np.median(err_pct))
-
-    ss_res = float(np.sum((y_reel - y_pred) ** 2))
-    ss_tot = float(np.sum((y_reel - np.mean(y_reel)) ** 2))
-    r2 = float(1 - ss_res / ss_tot) if ss_tot > 0 else 0.0
-
-    pm2_med = float(np.median(y_reel / surf))
-    mae_ref = float(np.mean(np.abs(y_reel - pm2_med * surf)))
-    gain_vs_ref_pct = float((mae_ref - mae) / mae_ref * 100) if mae_ref > 0 else 0.0
-
-    p_5 = float(np.mean(err_pct <= 5.0) * 100)
-    p_10 = float(np.mean(err_pct <= 10.0) * 100)
-    p_15 = float(np.mean(err_pct <= 15.0) * 100)
-    p_20 = float(np.mean(err_pct <= 20.0) * 100)
-    p_25_plus = float(np.mean(err_pct > 25.0) * 100)
-
-    # Indicateurs Notaires DVF & Négociation
-    pm2_dvf_med = float(df_sub["pm2_notaire_dvf"].median()) if "pm2_notaire_dvf" in df_sub.columns else pm2_med
-    ecart_notaire_med = (
-        float(df_sub["ecart_vs_notaire_pct"].median())
-        if "ecart_vs_notaire_pct" in df_sub.columns
-        else 0.0
-    )
-    nego_moy_pct = (
-        float(df_sub["taux_nego_estime_pct"].mean())
-        if "taux_nego_estime_pct" in df_sub.columns
-        else 5.0
-    )
-    economie_med = (
-        float(df_sub["economie_nego_euro"].median())
-        if "economie_nego_euro" in df_sub.columns
-        else 0.0
-    )
-
-    return {
-        "nb_biens": int(len(df_sub)),
-        "prix_median": round(float(np.median(y_reel))),
-        "pm2_median": round(pm2_med),
-        "pm2_notaire_median": round(pm2_dvf_med),
-        "ecart_notaire_median_pct": round(ecart_notaire_med, 1),
-        "nego_moyenne_pct": round(nego_moy_pct, 1),
-        "economie_nego_mediane": round(economie_med),
-        "r2": round(r2, 2),
-        "mae": round(mae),
-        "med_ae": round(med_ae),
-        "rmse": round(rmse),
-        "mae_ref": round(mae_ref),
-        "gain_vs_ref_pct": round(gain_vs_ref_pct, 1),
-        "mape": round(mape, 1),
-        "erreur_mediane_pct": round(mdape, 1),
-        "within_5pct": round(p_5, 1),
-        "within_10pct": round(p_10, 1),
-        "within_15pct": round(p_15, 1),
-        "within_20pct": round(p_20, 1),
-        "outliers_25pct": round(p_25_plus, 1),
-    }
-
-
-def evaluer_complet(df: pd.DataFrame, afficher: bool = True) -> dict:
-    """
-    Évaluation complète du modèle + Analyse Prix Affichés vs Ventes Notariées (DVF)
-    + Estimation des marges de négociation.
-    """
-    df_pred = generer_predictions_cv(df)
-    global_metrics = calculer_metriques_groupe(df_pred)
-
-    par_type = []
-    for t_label, grp in df_pred.groupby("type_label"):
-        m = calculer_metriques_groupe(grp)
-        m["type_label"] = t_label
-        par_type.append(m)
-
-    bins = [0, 100_000, 180_000, 280_000, float("inf")]
-    labels_tranches = ["< 100 k€", "100 k€ – 180 k€", "180 k€ – 280 k€", "> 280 k€"]
-    df_pred["tranche_prix"] = pd.cut(df_pred["prix_reel"], bins=bins, labels=labels_tranches)
-    par_tranche = []
-    for tr_label in labels_tranches:
-        grp = df_pred[df_pred["tranche_prix"] == tr_label]
-        if len(grp) > 0:
-            m = calculer_metriques_groupe(grp)
-            m["tranche"] = tr_label
-            par_tranche.append(m)
-
-    q_stats = (
-        df_pred.groupby("quartier_clean")
-        .agg(
-            nb=("id", "count"),
-            pm2_reel=("pm2_reel", "median"),
-            pm2_predit=("pm2_predit", "median"),
-            pm2_notaire=("pm2_notaire_dvf", "median"),
-            nego_moy=("taux_nego_estime_pct", "mean"),
-            mae_quartier=("erreur_abs_euro", "mean"),
-            mdape_quartier=("erreur_abs_pct", "median"),
-        )
-        .reset_index()
-    )
-    q_stats = q_stats[q_stats["nb"] >= 3].sort_values("pm2_reel", ascending=False)
-    quartiers = [
-        {
-            "quartier": r["quartier_clean"],
-            "nb": int(r["nb"]),
-            "pm2_reel": round(float(r["pm2_reel"])),
-            "pm2_predit": round(float(r["pm2_predit"])),
-            "pm2_notaire": round(float(r["pm2_notaire"])),
-            "nego_moy_pct": round(float(r["nego_moy"]), 1),
-            "mae": round(float(r["mae_quartier"])),
-            "mdape_pct": round(float(r["mdape_quartier"]), 1),
-        }
-        for _, r in q_stats.iterrows()
-    ]
-
-    importances_df = calculer_importances(df, top_n=10)
-    importances = importances_df.to_dict(orient="records")
-
-    if afficher:
-        g = global_metrics
-        print("\n" + "=" * 82)
-        print("  RAPPORT D'ÉVALUATION IA & ANALYSE NOTAIRES (DVF) — POITIERS (86000)")
-        print("=" * 82)
-        print(f"Biens évalués : {g['nb_biens']} | Prix affiché médian : {g['prix_median']:,.0f} € ({g['pm2_median']:,.0f} €/m²)")
-        print(f"Prix vendu Notaire (DVF voisinage) médian : {g['pm2_notaire_median']:,.0f} €/m² (Écart affiché vs signé : {g['ecart_notaire_median_pct']:+.1f}%)")
-        print(f"Marge de négociation moyenne recommandée  : -{g['nego_moyenne_pct']:.1f}% (Économie médiane : -{g['economie_nego_mediane']:,.0f} €)")
-        print("-" * 82)
-        print("1. PERFORMANCE DU MODÈLE IA (Validation Croisée 5 plis) :")
-        print(f"   • R² (variance expliquée)        : {g['r2']:.2f}")
-        print(f"   • Erreur médiane (MdAPE)         : ±{g['erreur_mediane_pct']:.1f} % (±{g['med_ae']:,.0f} € sur 50% des biens)")
-        print(f"   • Erreur moyenne (MAE / MAPE)    : ±{g['mae']:,.0f} € (±{g['mape']:.1f} %)")
-        print(f"   • Gain vs estimation naïve (€/m²): +{g['gain_vs_ref_pct']:.1f} % de précision")
-        print("-" * 82)
-        print("2. PALIERS DE PRÉCISION CONCRETS :")
-        print(f"   • <=  5 % d'écart : {g['within_5pct']:5.1f} % | <= 10 % : {g['within_10pct']:5.1f} % | <= 15 % : {g['within_15pct']:5.1f} % | <= 20 % : {g['within_20pct']:5.1f} %")
-        print("-" * 82)
-        print("3. COMPARATIF PRIX AFFICHÉ vs NOTAIRES (DVF) & NÉGOCIATION PAR TYPE :")
-        for pt in par_type:
-            print(
-                f"   • {pt['type_label']:<12} ({pt['nb_biens']:3d}) : "
-                f"Affiché {pt['pm2_median']:>4,.0f} €/m² vs Notaire DVF {pt['pm2_notaire_median']:>4,.0f} €/m² "
-                f"({pt['ecart_notaire_median_pct']:+4.1f}%) | Négo conseillée : -{pt['nego_moyenne_pct']:.1f}%"
-            )
-        print("-" * 82)
-        print("4. TOP VARIABLES QUI FONT LE PRIX :")
-        for row in importances[:6]:
-            print(f"   • {row['label']:<36} : impact moyen ±{row['impact_euro']:,.0f} €")
-        print("=" * 82)
-
-    return {
-        "df_pred": df_pred,
-        "kpis": global_metrics,
-        "par_type": par_type,
-        "par_tranche": par_tranche,
-        "quartiers": quartiers,
-        "importances": importances,
-    }
-
-
-def evaluer(df: pd.DataFrame):
-    return evaluer_complet(df, afficher=True)
-
-
-def entrainer_modele(df: pd.DataFrame) -> TransformedTargetRegressor:
-    X, y = construire_X_y(df)
-    modele = construire_modele()
-    modele.fit(X, y)
-    return modele
-
-
-def predire_bien(modele: TransformedTargetRegressor, bien: dict) -> float:
-    df_bien = pd.DataFrame([bien])
-    for col in [
-        "id", "titre", "description", "quartier", "type_bien", "dpe", "ges",
-        "surface_m2", "pieces", "nbr_chambres", "etage", "annee_construction",
-        "latitude", "longitude", "pm2_voisinage",
-    ]:
-        if col not in df_bien.columns:
-            df_bien[col] = np.nan
-    df_bien["prix"] = 1.0
-    if "quartier" in df_bien.columns:
-        df_bien["quartier"] = df_bien["quartier"].replace(QUARTIERS_HARMONISES)
-    if "type_bien" in df_bien.columns:
-        df_bien["type_bien"] = df_bien["type_bien"].replace(TYPES_BIEN_HARMONISES)
-    df_bien = features_texte(df_bien)
-    df_bien = enrichir_avec_ollama(df_bien, utiliser_api_ollama=False)
-    df_bien = features_geo(df_bien)
-    if df_bien["pm2_voisinage"].isna().all() and os.path.exists("dvf_poitiers.csv"):
-        dvf = pd.read_csv("dvf_poitiers.csv", low_memory=False)
-        df_bien["pm2_voisinage"] = prix_m2_voisinage(df_bien, dvf)["pm2_voisinage"]
-    X_bien, _ = construire_X_y(df_bien)
-    return float(modele.predict(X_bien)[0])
+    return df_hist_feat, df_recent_feat
 
 
 if __name__ == "__main__":
-    df_propre = charger_et_preparer("annonces.csv")
-    evaluer(df_propre)
+    construire_tables_features(verbose=True)

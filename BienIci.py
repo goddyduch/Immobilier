@@ -21,6 +21,21 @@ BASE_URL = "https://www.bienici.com"
 SUGGEST_URL = "https://res.bienici.com/suggest.json"
 ADS_URL = f"{BASE_URL}/realEstateAds.json"
 
+GRAND_POITIERS_COMMUNES = [
+    "Poitiers 86000",
+    "Buxerolles 86180",
+    "Saint-Benoît 86280",
+    "Migné-Auxances 86440",
+    "Chasseneuil-du-Poitou 86360",
+    "Jaunay-Marigny 86130",
+    "Biard 86580",
+    "Vouneuil-sous-Biard 86580",
+    "Fontaine-le-Comte 86240",
+    "Montamisé 86360",
+    "Smarves 86240",
+    "Ligugé 86240",
+]
+
 HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -130,11 +145,21 @@ def trouver_zone(ville):
 
 
 def recuperer_annonces(ville, type_operation="buy", prix_max=None, prix_min=None,
-                       surface_min=None, surface_max=None, max_annonces=500):
+                       surface_min=None, surface_max=None, max_annonces=500,
+                       nouvelles_seulement=False):
     zone_ids = trouver_zone(ville)
     taille_page = 50
     annonces, vues = [], set()
     debut = 0
+
+    ids_connus = set()
+    if nouvelles_seulement:
+        try:
+            from DB import get_ids_connus
+            ids_connus = get_ids_connus(source="bienici")
+            print(f"{len(ids_connus)} annonces Bien'ici déjà connues en base.")
+        except Exception:
+            ids_connus = set()
 
     while len(annonces) < max_annonces:
         filtres = {
@@ -144,7 +169,7 @@ def recuperer_annonces(ville, type_operation="buy", prix_max=None, prix_min=None
             "filterType": type_operation,  # "buy" ou "rent"
             "propertyType": ["flat", "house"],
             "page": debut // taille_page + 1,
-            "sortBy": "relevance",
+            "sortBy": "publicationDate",
             "sortOrder": "desc",
             "onTheMarket": [True],
             "zoneIdsByTypes": {"zoneIds": zone_ids},
@@ -163,20 +188,72 @@ def recuperer_annonces(ville, type_operation="buy", prix_max=None, prix_min=None
         if not page:
             break
 
+        nouvelles_sur_page = 0
         for a in page:
-            if a.get("id") in vues:  # dédoublonnage
+            ad_id = str(a.get("id"))
+            if ad_id in vues:  # dédoublonnage
                 continue
-            vues.add(a.get("id"))
+            vues.add(ad_id)
+            if nouvelles_seulement and ad_id in ids_connus:
+                continue
             annonces.append(a)
+            nouvelles_sur_page += 1
 
         total = data.get("total", 0)
         debut += taille_page
-        print(f"{len(annonces)} annonces récupérées (total annoncé : {total})")
+        print(f"{len(annonces)} annonces retenues (+{nouvelles_sur_page} sur cette page / total marché : {total})")
+        if nouvelles_seulement and nouvelles_sur_page == 0:
+            print("Toutes les annonces de cette page sont déjà en base -> arrêt anticipé.")
+            break
         if debut >= total:
             break
         time.sleep(random.uniform(2, 4))  # pause pour ne pas surcharger le site
 
     return annonces[:max_annonces]
+
+
+def recuperer_annonces_grand_poitiers(
+    type_operation="buy",
+    max_par_commune=250,
+    max_total=800,
+    nouvelles_seulement=False,
+):
+    """Récupère les annonces sur l'ensemble des communes de Grand Poitiers (avec dédoublonnage)."""
+    toutes, vues = [], set()
+    for commune in GRAND_POITIERS_COMMUNES:
+        try:
+            lot = recuperer_annonces(
+                ville=commune,
+                type_operation=type_operation,
+                max_annonces=max_par_commune,
+                nouvelles_seulement=nouvelles_seulement,
+            )
+            for a in lot:
+                cp = str(a.get("postalCode") or "")
+                if cp and not cp.startswith("86"):
+                    continue
+                ad_id = str(a.get("id"))
+                if ad_id not in vues:
+                    vues.add(ad_id)
+                    toutes.append(a)
+            if len(toutes) >= max_total:
+                break
+        except Exception as e:
+            print(f"[BienIci Grand Poitiers] Commune '{commune}' ignorée ({e}).")
+    return toutes[:max_total]
+
+
+def extraire_photos_urls(a, max_photos=5):
+    """Extrait jusqu'à `max_photos` URLs de photos depuis une annonce brute Bien'ici."""
+    photos = a.get("photos") or []
+    urls = []
+    for p in photos:
+        u = p.get("url") or p.get("url_photo") if isinstance(p, dict) else (p if isinstance(p, str) else None)
+        if u and isinstance(u, str) and u.startswith("http"):
+            urls.append(u)
+        if len(urls) >= max_photos:
+            break
+    return "|".join(urls)
 
 
 def simplifier(a):
@@ -204,6 +281,7 @@ def simplifier(a):
         "description": (a.get("description") or "").replace("\n", " ").strip(),
         "date_publication": a.get("publicationDate"),
         "url": f"{BASE_URL}/annonce/{a.get('id')}" if a.get("id") else None,
+        "photos_urls": extraire_photos_urls(a, max_photos=5),
     }
 
 
@@ -245,6 +323,10 @@ def exporter_csv(annonces, chemin):
     if not annonces:
         print("Rien à exporter.")
         return
+    import os
+    os.makedirs("csv", exist_ok=True)
+    if not chemin.startswith("csv/") and "/" not in chemin:
+        chemin = os.path.join("csv", chemin)
     with open(chemin, "w", newline="", encoding="utf-8-sig") as f:
         writer = csv.DictWriter(f, fieldnames=list(annonces[0].keys()), delimiter=";")
         writer.writeheader()

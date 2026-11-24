@@ -199,14 +199,49 @@ async def main():
             encoding="utf-8",
         )
 
-        # --- AJOUT 2 --- ouvrir chaque annonce et récupérer ses caractéristiques
+        # --- AJOUT 2 --- ouvrir uniquement les NOUVELLES annonces non présentes en base/cache
+        existantes_par_id = {}
+        if Path("jinka_annonces.json").exists():
+            try:
+                anciennes = json.loads(Path("jinka_annonces.json").read_text(encoding="utf-8"))
+                for a in anciennes:
+                    if a.get("id"):
+                        existantes_par_id[str(a["id"])] = a
+            except Exception:
+                pass
+
+        try:
+            from DB import get_ids_connus
+            ids_connus_db = get_ids_connus(source="jinka")
+        except Exception:
+            ids_connus_db = set()
+
         toutes_annonces = []
+        nb_nouvelles = 0
+        nb_reutilisees = 0
+
         for i, l in enumerate(annonces_liens, start=1):
-            print(f"[{i}/{len(annonces_liens)}] {l['href']}")
+            m_id = re.search(r"/ad/([^?]+)", l["href"])
+            ad_id = m_id.group(1) if m_id else None
+            carte_actuelle = parser_carte(l["texte"])
+
+            # Si l'annonce est déjà connue, on ne ré-ouvre pas la page Playwright !
+            if ad_id and ad_id in existantes_par_id:
+                details = existantes_par_id[ad_id]
+                details["carte"] = carte_actuelle  # met à jour le prix/infos de la carte
+                toutes_annonces.append(details)
+                nb_reutilisees += 1
+                print(f"[{i}/{len(annonces_liens)}] Déjà connue (ignorée) : {ad_id}")
+                continue
+
+            print(f"[{i}/{len(annonces_liens)}] NOUVELLE annonce -> extraction : {l['href']}")
             details = await extraire_annonce(context, l["href"])
-            details["carte"] = parser_carte(l["texte"])  # infos de la liste
+            details["carte"] = carte_actuelle
             toutes_annonces.append(details)
+            nb_nouvelles += 1
             await asyncio.sleep(random.uniform(2, 5))  # pause pour ne pas surcharger le site
+
+        print(f"Bilan Jinka : {nb_nouvelles} nouvelles extraites, {nb_reutilisees} déjà connues toujours actives.")
 
         Path("jinka_annonces.json").write_text(
             json.dumps(toutes_annonces, ensure_ascii=False, indent=2),
@@ -229,11 +264,12 @@ async def main():
             for k in ligne:
                 if k not in colonnes:
                     colonnes.append(k)
-        with open("jinka_annonces.csv", "w", newline="", encoding="utf-8-sig") as f:
+        Path("csv").mkdir(exist_ok=True)
+        with open("csv/jinka_annonces.csv", "w", newline="", encoding="utf-8-sig") as f:
             w = csv.DictWriter(f, fieldnames=colonnes, delimiter=";")
             w.writeheader()
             w.writerows(lignes_csv)
-        print(f"{len(toutes_annonces)} annonces sauvegardées (jinka_annonces.json / .csv)")
+        print(f"{len(toutes_annonces)} annonces sauvegardées (jinka_annonces.json / csv/jinka_annonces.csv)")
 
         input("Appuyez sur Entrée dans le terminal pour fermer le navigateur...")
 

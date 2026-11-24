@@ -9,18 +9,34 @@ __pycache__/
 annonces_html/
 session_jinka/
 test/
-annonces.csv
-annonces_bienici.csv
+csv/
+data/
+moteurimmo_profile/
+mlruns/
+mlflow.db
+photos_cache/
+photos_features_cache.json
+modele_poitiers.joblib
 annonces_bienici.json
 jinka_annonces.json
+moteurimmo_annonces.json
 
 # Garder uniquement ces fichiers (liste blanche)
 !.gitignore
+!main.py
 !DB.py
 !Merge.py
 !Jinka.py
 !BienIci.py
+!MoteurImmo.py
+!Photos.py
 !FeatureEngineering.py
+!Entrainement.py
+!Prediction.py
+!AVMComparable.py
+!Deduplication.py
+!EnrichissementAnnonces.py
+!Improvement.py
+!TestModele.py
 !Dashboard.py
-!annonces.csv
 
