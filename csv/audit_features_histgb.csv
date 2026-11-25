@@ -1,0 +1,57 @@
+feature,label,impact_perm_euro,gain_drop_mae_euro,gain_drop_r2,statut
+dpe_num,Note DPE (A à G),1781.0,468.0,0.0074,Utile
+valeur_dvf_nette_travaux,Valeur DVF nette de travaux (€),16025.0,399.0,0.0091,Utile
+surface_m2,Surface habitable (m²),28386.0,359.0,0.0033,Utile
+dist_arret_bus_m,Distance arrêt de bus Vitalis le plus proche (m),585.0,292.0,0.0012,Utile
+dist_centre_km,Distance Centre-ville (km),1316.0,286.0,0.0044,Utile
+txt_a_renover,Mot-clé : À rénover / Travaux,404.0,261.0,0.0025,Utile
+latitude,Latitude,549.0,248.0,0.004,Utile
+dist_commerce_alim_m,Distance commerce alimentaire le plus proche (m),373.0,243.0,0.0034,Utile
+loyer_m2_estime,Loyer mensuel de référence estimé (€/m²/mois),411.0,219.0,0.002,Utile
+surface_par_piece,Surface moyenne par pièce (m²/p),1146.0,206.0,0.0023,Utile
+txt_longueur,Longueur du descriptif,1167.0,183.0,0.0005,Utile
+iris_code,Îlot IRIS exact (GPS),321.0,178.0,0.001,Utile
+quartier,Quartier / Commune,1291.0,167.0,0.0011,Utile
+vis_emb_1,Embedding visuel photo — composante couleur 1,148.0,160.0,0.0019,Utile
+valeur_dvf_ajustee_taille,Valeur DVF ajustée par taille (€),6603.0,156.0,0.0016,Utile
+pm2_dvf_pondere_dist,Prix/m² DVF pondéré par la distance,3473.0,153.0,0.0053,Utile
+txt_jardin,Mot-clé : Jardin,407.0,151.0,0.0016,Utile
+trav_elec_plomberie,Poste travaux : Élec. / Plomberie,45.0,151.0,0.0024,Utile
+txt_terrasse,Mot-clé : Terrasse,682.0,134.0,0.0022,Utile
+vis_emb_0,Embedding visuel photo — composante couleur 0,353.0,130.0,0.0018,Utile
+txt_parking,Mot-clé : Parking / Garage,180.0,122.0,0.0018,Utile
+etage,Étage,433.0,120.0,0.0027,Utile
+txt_cave,Mot-clé : Cave,202.0,111.0,0.0016,Utile
+surface_ext_m2,Surface terrain/jardin extraite (m²),43.0,89.0,0.0021,Utile
+pieces,Nombre de pièces,699.0,81.0,0.0026,Utile
+pm2_dvf_tranche_surface,Prix/m² DVF par tranche de surface,816.0,79.0,0.001,Utile
+llm_etat_score,Note État du bien (LLM 1-5),451.0,79.0,0.0016,Utile
+txt_lumineux,Mot-clé : Lumineux,157.0,76.0,0.0014,Utile
+clip_etat_score,Note état intérieur OpenCLIP 5 catégories (1=Très dégradé à 5=Neuf),380.0,68.0,0.0003,Utile
+vis_contraste,Contraste moyen des photos,80.0,65.0,0.0011,Utile
+surface_relative_marche,Surface relative au marché local,1529.0,64.0,0.001,Utile
+dist_campus_km,Distance Campus Universitaire (km),375.0,52.0,0.0006,Utile
+vis_saturation,Saturation couleurs photos,198.0,42.0,0.0012,Utile
+type_bien,Type de bien (Maison / Appart.),670.0,39.0,0.001,Utile
+llm_travaux_score,Niveau de travaux (LLM 0-3),78.0,34.0,-0.0001,Utile
+clip_score_travaux,Probabilité visuelle travaux OpenCLIP (0 à 1),255.0,27.0,0.0009,Utile
+est_mention_carrez,Mention Loi Carrez explicite (0/1),30.0,22.0,0.0007,Utile
+annee_construction,Année de construction,1346.0,17.0,0.0001,Utile
+charges_annuelles,Charges annuelles extraites (€),639.0,15.0,0.0028,Utile
+txt_piscine,Mot-clé : Piscine,495.0,14.0,0.0019,Utile
+nb_commerces_500m,Nombre de commerces/services dans un rayon de 500 m,494.0,13.0,-0.0015,Utile
+dist_gare_km,Distance Gare (km),199.0,12.0,0.0009,Utile
+vis_emb_2,Embedding visuel photo — composante saturation/luminance 2,156.0,10.0,-0.0002,Utile
+txt_immeuble,Mot-clé : Immeuble de rapport / Lots,0.0,0.0,0.0,Neutre
+trav_cuisine_sdb,Poste travaux : Cuisine / SDB,-0.0,0.0,0.0,Neutre
+trav_menuiseries,Poste travaux : Menuiseries,0.0,0.0,0.0,Neutre
+niveau_travaux_cat,"Catégorie travaux (0=Aucun, 1=Légers 400€, 2=Rénov 750€, 3=Neuf 1200€, 4=Lourde 2000€)",95.0,-1.0,0.0007,Bruit (à retirer)
+age_bien,Ancienneté du bien (années),447.0,-4.0,-0.0001,Bruit (à retirer)
+pm2_voisinage,Prix/m² Notaire DVF voisinage (800m),1309.0,-6.0,-0.0007,Utile
+est_en_qpv,Situé en zone QPV (0/1),62.0,-6.0,-0.0002,Bruit (à retirer)
+clip_score_renove,Probabilité visuelle bien rénové OpenCLIP (0 à 1),205.0,-9.0,-0.0004,Bruit (à retirer)
+score_commodites_500m,Indice synthétique commodités & mobilité (0-20),266.0,-13.0,-0.0015,Bruit (à retirer)
+nb_arrets_bus_400m,Nombre d'arrêts de bus dans un rayon de 400 m,384.0,-25.0,-0.0013,Bruit (à retirer)
+trav_rafraichissement,Poste travaux : Rafraîchissement,16.0,-30.0,-0.0003,Bruit (à retirer)
+llm_note_offre,Note Attractivité (LLM /10),1431.0,-48.0,-0.0029,Utile
+txt_pac,Mot-clé : Pompe à chaleur / Clim,363.0,-107.0,0.0002,Bruit (à retirer)

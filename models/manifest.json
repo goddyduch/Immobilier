@@ -1,0 +1,29 @@
+{
+  "version": "v1_20261125_141801",
+  "trained_at": "2026-11-25T14:18:01.986037+00:00",
+  "nb_offres": 929,
+  "nb_features": 48,
+  "sha256": "a06b847be811",
+  "metrics": {
+    "nb_biens": 929,
+    "prix_median": 159750,
+    "pm2_median": 2248,
+    "pm2_notaire_median": 2221,
+    "ecart_notaire_median_pct": 4.0,
+    "nego_moyenne_pct": 7.2,
+    "economie_nego_mediane": 9250,
+    "r2": 0.81,
+    "mae": 27415,
+    "med_ae": 17554,
+    "rmse": 40094,
+    "mae_ref": 41483,
+    "gain_vs_ref_pct": 33.9,
+    "mape": 15.2,
+    "erreur_mediane_pct": 11.8,
+    "within_5pct": 23.7,
+    "within_10pct": 43.6,
+    "within_15pct": 59.2,
+    "within_20pct": 72.1,
+    "outliers_25pct": 18.9
+  }
+}

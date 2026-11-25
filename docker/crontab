@@ -1,0 +1,8 @@
+# Ingestion & prédictions toutes les 3h (sans réentraînement lourd)
+0 */3 * * * cd /app && python main.py update --no-train
+
+# Réentraînement hebdomadaire avec Gate de non-régression (dimanche 03h00)
+0 3 * * 0 cd /app && python main.py train && python main.py predict && python main.py monitor
+
+# Audit complet mensuel des features & ablation MLflow (1er du mois à 04h00)
+0 4 1 * * cd /app && python main.py features && python main.py improve && python main.py monitor

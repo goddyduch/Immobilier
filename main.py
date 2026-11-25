@@ -15,18 +15,19 @@ Commandes disponibles :
   python main.py check            # Vérifie en direct par requête HTTP si les annonces actives sont toujours en ligne
   python main.py db               # Affiche les 4 tables PostgreSQL, le décompte par statut et un aperçu des données
   python main.py scrape           # Lance les scrapers incrémentaux (--source bienici|jinka|all)
-  python main.py dash             # Lance le serveur interactif Dash sur http://127.0.0.1:8050 (sans ré-entraîner)
+  python main.py api              # Lance l'API REST FastAPI sur http://127.0.0.1:8000
+  python main.py monitor          # Calcule un snapshot de monitoring (Data/Pred Drift)
 """
 
 import argparse
 import asyncio
 import pandas as pd
 
-import DB
-import Entrainement as tr
-import FeatureEngineering as fe
-import Merge
-import Prediction as pr
+from src.ingestion import db as DB
+from src.ml import train as tr
+from src.ml import features as fe
+from src.ingestion import merge as Merge
+from src.ml import predict as pr
 
 
 def cmd_update(args):
@@ -84,7 +85,7 @@ def cmd_eval(_args):
 
 def cmd_improve(args):
     """Lance l'analyse des features, la comparaison de modèles et le tracking MLflow (Improvement.py)."""
-    import Improvement
+    from src.ml import evaluation as Improvement
 
     Improvement.executer_improvement(ouvrir_graphe=args.open or args.ui)
 
@@ -126,7 +127,7 @@ def cmd_check(args):
 def cmd_scrape(args):
     """Lance les scrapers Bien'ici et/ou Jinka en mode incrémental."""
     if args.source in ("bienici", "all"):
-        import BienIci
+        from src.ingestion import bienici as BienIci
 
         print(f"[Scraping Bien'ici — {args.ville} (max {args.max_annonces})]")
         brutes = BienIci.recuperer_annonces(
@@ -141,13 +142,13 @@ def cmd_scrape(args):
             BienIci.exporter_csv(annonces, "csv/annonces_bienici.csv")
 
     if args.source in ("jinka", "all"):
-        import Jinka
+        from src.ingestion import jinka as Jinka
 
         print("[Scraping incrémental Jinka]")
         asyncio.run(Jinka.main())
 
     if args.source in ("moteurimmo", "all"):
-        import MoteurImmo
+        from src.ingestion import moteurimmo as MoteurImmo
 
         print("[Export interactif MoteurImmo Poitiers -> BDD]")
         asyncio.run(MoteurImmo.exporter_moteurimmo_interactif(lancer_pipeline_ia=True))
@@ -171,11 +172,20 @@ def cmd_db(_args):
         print(df_pred[cols].head(5).to_string(index=False))
 
 
-def cmd_dash(args):
-    """Lance le Dashboard interactif Dash (lit directement les prédictions pré-calculées)."""
-    import Dashboard
+def cmd_api(args):
+    """Lance l'API REST FastAPI (uvicorn)."""
+    import uvicorn
 
-    Dashboard.lancer_dashboard(port=args.port, debug=not args.no_debug)
+    uvicorn.run("backend.app:app", host=args.host, port=args.port, reload=args.reload, workers=args.workers)
+
+
+def cmd_monitor(_args):
+    """Calcule et affiche un snapshot de monitoring (Complétude, PSI Data Drift, Prediction Drift)."""
+    import json
+    from src.monitoring import drift as monitoring
+
+    snap = monitoring.calculer_snapshot_monitoring(sauvegarder_bdd=True)
+    print(json.dumps(snap, ensure_ascii=False, indent=2))
 
 
 def construire_parser() -> argparse.ArgumentParser:
@@ -232,11 +242,17 @@ def construire_parser() -> argparse.ArgumentParser:
     p_sc.add_argument("--complet", action="store_true", help="Récupère même les annonces déjà connues")
     p_sc.set_defaults(func=cmd_scrape)
 
-    # 7. dash
-    p_da = sub.add_parser("dash", help="Lance le Dashboard interactif Dash sur le port 8050")
-    p_da.add_argument("--port", type=int, default=8050, help="Port du serveur Dash")
-    p_da.add_argument("--no-debug", action="store_true", help="Désactive le mode debug de Dash")
-    p_da.set_defaults(func=cmd_dash)
+    # 7. api
+    p_api = sub.add_parser("api", help="Lance l'API REST FastAPI sur le port 8000")
+    p_api.add_argument("--host", default="127.0.0.1", help="Hôte d'écoute")
+    p_api.add_argument("--port", type=int, default=8000, help="Port de l'API")
+    p_api.add_argument("--reload", action="store_true", help="Rechargement à chaud (dev)")
+    p_api.add_argument("--workers", type=int, default=1, help="Nombre de workers Uvicorn")
+    p_api.set_defaults(func=cmd_api)
+
+    # 9. monitor
+    p_mon = sub.add_parser("monitor", help="Calcule un snapshot de monitoring (Data/Pred Drift & Qualité)")
+    p_mon.set_defaults(func=cmd_monitor)
 
     return parser
 

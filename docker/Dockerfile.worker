@@ -1,0 +1,22 @@
+FROM python:3.11-slim
+
+WORKDIR /app
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+# Supercronic pour l'exécution propre des crons dans Docker
+ARG SUPERCRONIC_URL=https://github.com/aptible/supercronic/releases/download/v0.2.33/supercronic-linux-amd64
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl ca-certificates libpq-dev gcc \
+    && curl -fsSL "$SUPERCRONIC_URL" -o /usr/local/bin/supercronic \
+    && chmod +x /usr/local/bin/supercronic \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt \
+    && pip install --no-cache-dir open-clip-torch torch --index-url https://download.pytorch.org/whl/cpu || true
+
+COPY . .
+
+CMD ["supercronic", "/app/docker/crontab"]

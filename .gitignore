@@ -1,42 +1,35 @@
-# Tout ignorer par défaut
-*
-
-# Fichiers et dossiers explicitement ignorés dans le projet
+# Environnements & systèmes
 .DS_Store
 .venv/
 .vscode/
+.env
 __pycache__/
-annonces_html/
-session_jinka/
-test/
-csv/
-data/
-moteurimmo_profile/
+*.py[cod]
+.pytest_cache/
+node_modules/
+frontend/dist/
+
+# Base de données & Docker volumes
+pgdata/
+caddy_data/
+caddy_config/
+
+# Modèles binaires & MLflow
+*.joblib
+*.joblib.tmp
 mlruns/
 mlflow.db
+
+# Données runtime, profils navigateurs & caches locaux
+moteurimmo_profile/
+session_jinka/
 photos_cache/
-photos_features_cache.json
-modele_poitiers.joblib
 annonces_bienici.json
 jinka_annonces.json
 moteurimmo_annonces.json
-
-# Garder uniquement ces fichiers (liste blanche)
-!.gitignore
-!main.py
-!DB.py
-!Merge.py
-!Jinka.py
-!BienIci.py
-!MoteurImmo.py
-!Photos.py
-!FeatureEngineering.py
-!Entrainement.py
-!Prediction.py
-!AVMComparable.py
-!Deduplication.py
-!EnrichissementAnnonces.py
-!Improvement.py
-!TestModele.py
-!Dashboard.py
-
+ollama_features_cache.json
+photos_features_cache.json
+data/enrichissement_cache.json
+data/moteurimmo/
+csv/annonces*.csv
+csv/rapport_improvement_mlflow.html

@@ -1,0 +1,27 @@
+services:
+  api:
+    command: uvicorn backend.app:app --host 0.0.0.0 --port 8000 --workers 2
+    volumes:
+      - ./models:/app/models
+      - ./csv:/app/csv
+
+  frontend:
+    image: nginx:alpine
+    working_dir: /usr/share/nginx/html
+    command: nginx -g "daemon off;"
+    ports: []
+    volumes:
+      - ./frontend/dist:/usr/share/nginx/html:ro
+
+  proxy:
+    image: caddy:2-alpine
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./docker/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./caddy_data:/data
+      - ./caddy_config:/config
+    depends_on:
+      - api
+      - frontend

@@ -1,0 +1,15 @@
+run_name,phase,param_nb_features,param_combinaison,r2,mae,med_ae,rmse,mape,mdape,within_5pct,within_10pct,within_15pct,within_20pct,gain_vs_naif_pct,param_model_type,param_max_depth,param_lr,param_l2,param_loss,param_n_estimators,param_alpha,param_weights
+Features_1_Structure_Seule,ablation_features,10,1_Structure_Seule,0.7792,33515.0,21107.0,51762.0,18.17,14.62,18.7,37.8,50.5,63.7,28.7,,,,,,,,
+Features_2_Structure_+_Texte_Regex,ablation_features,25,2_Structure_+_Texte_Regex,0.8145,31873.0,20728.0,47448.0,17.64,14.41,17.9,33.1,51.5,65.9,32.2,,,,,,,,
+Features_3_Structure_+_Texte_+_Geo,ablation_features,29,3_Structure_+_Texte_+_Geo,0.8084,30746.0,17817.0,48221.0,16.58,13.86,23.9,37.8,54.0,69.4,34.6,,,,,,,,
+Features_4_Structure_+_Texte_+_Geo_+_LLM,ablation_features,32,4_Structure_+_Texte_+_Geo_+_LLM,0.8124,29637.0,18042.0,47706.0,16.12,12.33,21.4,40.3,57.5,69.9,37.0,,,,,,,,
+Features_5_Baseline_Actuelle_(+_DVF),ablation_features,33,5_Baseline_Actuelle_(+_DVF),0.8184,29849.0,17611.0,46935.0,15.96,12.98,22.6,41.3,57.5,69.7,36.5,,,,,,,,
+Features_6_Toutes_Features_(+_Interactions),ablation_features,38,6_Toutes_Features_(+_Interactions),0.816,29596.0,17072.0,47245.0,15.87,13.0,21.9,41.0,58.2,72.1,37.1,,,,,,,,
+Features_7_Top_Features_Selectionnees,ablation_features,33,7_Top_Features_Selectionnees,0.8183,29379.0,16401.0,46949.0,15.72,12.38,23.1,42.3,58.2,71.4,37.5,,,,,,,,
+Model_1_HistGB_Baseline,model_comparison,33,,0.8183,29379.0,16401.0,46949.0,15.72,12.38,23.1,42.3,58.2,71.4,37.5,HistGradientBoosting,3.0,0.05,0.0,,,,
+Model_2_HistGB_Tuned_L2,model_comparison,33,,0.8122,29181.0,15403.0,47736.0,15.63,11.74,24.6,44.8,58.0,71.6,37.9,HistGradientBoosting,4.0,0.04,1.5,,,,
+Model_3_GradientBoosting_Huber,model_comparison,33,,0.8294,28494.0,17601.0,45491.0,15.52,11.96,22.9,42.5,60.7,71.6,39.4,GradientBoosting_Huber,3.0,0.045,,huber,,,
+Model_4_ExtraTrees_Regressor,model_comparison,33,,0.8124,30116.0,17622.0,47707.0,16.34,12.02,21.4,43.8,57.7,67.7,35.9,ExtraTrees,14.0,,,,400.0,,
+Model_5_RandomForest_Regressor,model_comparison,33,,0.7944,30923.0,16785.0,49949.0,16.84,12.84,21.1,43.0,57.7,68.4,34.2,RandomForest,12.0,,,,400.0,,
+Model_6_Ridge_LogTarget,model_comparison,33,,0.3881,39575.0,22923.0,86164.0,20.45,16.27,16.9,33.6,46.5,59.5,15.8,Ridge,,,,,,15.0,
+Model_7_Voting_Ensemble_(HGB+Huber+ET),model_comparison,33,,0.8288,28363.0,16121.0,45572.0,15.26,11.26,24.9,45.8,60.2,71.4,39.7,VotingRegressor,,,,,,,0.45_0.35_0.20
