@@ -109,19 +109,229 @@ def nettoyer_anciennes_tables_doublons():
         pass
 
 
+def _backfill_geom_sql(conn, nom_table: str):
+    """Met à jour la colonne PostGIS `geom` (GEOGRAPHY Point 4326) si lat/lon présents."""
+    try:
+        cols = {
+            r[0]
+            for r in conn.execute(
+                text("SELECT column_name FROM information_schema.columns WHERE table_name = :t"),
+                {"t": nom_table},
+            ).fetchall()
+        }
+        if {"geom", "latitude", "longitude"}.issubset(cols):
+            conn.execute(text(f"""
+                UPDATE "{nom_table}"
+                SET geom = ST_SetSRID(ST_MakePoint(longitude, latitude), 4326)::geography
+                WHERE geom IS NULL
+                  AND latitude IS NOT NULL AND longitude IS NOT NULL
+                  AND latitude BETWEEN -90 AND 90 AND longitude BETWEEN -180 AND 180
+            """))
+    except Exception:
+        pass
+
+
 def ecrire_table_sql(df: pd.DataFrame, nom_table: str):
-    """Écrit un DataFrame dans PostgreSQL via table staging + swap atomique transactionnel."""
+    """Écrit un DataFrame dans PostgreSQL atomiquement tout en préservant les index PostGIS."""
     df_sql = normaliser_types_df(df).drop_duplicates(subset="id", keep="first")
     if not db_disponible():
         return False
-    tmp_table = f"_tmp_{nom_table}_{uuid.uuid4().hex[:8]}"
-    df_sql.to_sql(tmp_table, engine, if_exists="replace", index=False)
     with engine.begin() as conn:
-        conn.execute(text(f'ALTER TABLE "{tmp_table}" ADD PRIMARY KEY (id)'))
-        conn.execute(text(f'DROP TABLE IF EXISTS "{nom_table}" CASCADE'))
-        conn.execute(text(f'ALTER TABLE "{tmp_table}" RENAME TO "{nom_table}"'))
+        exists = bool(conn.execute(
+            text("SELECT to_regclass(:t) IS NOT NULL"), {"t": f'"{nom_table}"'}
+        ).scalar())
+        if exists:
+            cols_ex = {
+                r[0]
+                for r in conn.execute(
+                    text("SELECT column_name FROM information_schema.columns WHERE table_name = :t"),
+                    {"t": nom_table},
+                ).fetchall()
+            }
+            for col in df_sql.columns:
+                if col not in cols_ex:
+                    dtype = str(df_sql[col].dtype)
+                    sql_type = "DOUBLE PRECISION" if "float" in dtype else "BIGINT" if "int" in dtype else "BOOLEAN" if "bool" in dtype else "TEXT"
+                    conn.execute(text(f'ALTER TABLE "{nom_table}" ADD COLUMN IF NOT EXISTS "{col}" {sql_type}'))
+            conn.execute(text(f'TRUNCATE TABLE "{nom_table}"'))
+            df_sql.to_sql(nom_table, conn, if_exists="append", index=False, method="multi", chunksize=1000)
+            _backfill_geom_sql(conn, nom_table)
+        else:
+            tmp_table = f"_tmp_{nom_table}_{uuid.uuid4().hex[:8]}"
+            df_sql.to_sql(tmp_table, conn, if_exists="replace", index=False, method="multi", chunksize=1000)
+            conn.execute(text(f'ALTER TABLE "{tmp_table}" ADD PRIMARY KEY (id)'))
+            conn.execute(text(f'ALTER TABLE "{tmp_table}" RENAME TO "{nom_table}"'))
+            if "code_territoire" in df_sql.columns:
+                conn.execute(text(f'CREATE INDEX IF NOT EXISTS "idx_{nom_table}_terr" ON "{nom_table}" (code_territoire)'))
     print(f"[PostgreSQL] Table '{nom_table}' écrite atomiquement ({len(df_sql)} lignes, {len(df_sql.columns)} colonnes).")
     return True
+
+
+def postgis_disponible(conn=None) -> bool:
+    """Vérifie si l'extension PostGIS est installée sur le serveur PostgreSQL."""
+    try:
+        if conn is not None:
+            return bool(conn.execute(text(
+                "SELECT EXISTS(SELECT 1 FROM pg_available_extensions WHERE name = 'postgis')"
+            )).scalar())
+        if not db_disponible():
+            return False
+        with engine.connect() as c:
+            return bool(c.execute(text(
+                "SELECT EXISTS(SELECT 1 FROM pg_available_extensions WHERE name = 'postgis')"
+            )).scalar())
+    except Exception:
+        return False
+
+
+def migrer_schema_multivilles(init_sql_path: str = "db/init.sql") -> bool:
+    """
+    Migration NON DESTRUCTIVE vers le schéma multi-villes (12 villes-centres) :
+    - Adapte automatiquement PostGIS (GEOGRAPHY/GIST) vs PostgreSQL standard (lat/lon + BTREE)
+    - Peuple `ref_territoires`
+    - Ajoute `code_territoire`, `est_ville_centre` (+ `geom` si PostGIS) sans perte de données.
+    """
+    if not db_disponible():
+        return False
+    from src.ingestion.territoires import VILLES_CENTRES
+
+    with open(init_sql_path, "r", encoding="utf-8") as f:
+        ddl = f.read()
+
+    with engine.begin() as conn:
+        has_pgis = postgis_disponible(conn)
+        if not has_pgis:
+            print("[PostgreSQL] Extension PostGIS absente localement -> bascule propre sur index BTREE lat/lon.")
+
+        for stmt in [s.strip() for s in ddl.split(";") if s.strip()]:
+            if not has_pgis:
+                upper = stmt.upper()
+                if "CREATE EXTENSION IF NOT EXISTS POSTGIS" in upper:
+                    continue
+                if "USING GIST" in upper:
+                    continue
+                stmt = (
+                    stmt.replace("GEOGRAPHY(Point, 4326) NOT NULL", "TEXT")
+                    .replace("GEOGRAPHY(Point, 4326)", "TEXT")
+                    .replace("GEOMETRY(Geometry, 4326)", "TEXT")
+                )
+            conn.execute(text(stmt))
+
+        for code, cfg in VILLES_CENTRES.items():
+            if has_pgis:
+                conn.execute(
+                    text("""
+                        INSERT INTO ref_territoires (
+                            code_territoire, nom, departement, code_insee, codes_postaux, rayon_urbain_km,
+                            centre_geom, gare_geom, campus_geom, chu_geom, actif
+                        ) VALUES (
+                            :code, :nom, :dept, :insee, :cps, :rayon,
+                            ST_SetSRID(ST_MakePoint(:c_lon, :c_lat), 4326)::geography,
+                            ST_SetSRID(ST_MakePoint(:g_lon, :g_lat), 4326)::geography,
+                            ST_SetSRID(ST_MakePoint(:u_lon, :u_lat), 4326)::geography,
+                            ST_SetSRID(ST_MakePoint(:h_lon, :h_lat), 4326)::geography,
+                            TRUE
+                        )
+                        ON CONFLICT (code_territoire) DO UPDATE SET
+                            nom = EXCLUDED.nom,
+                            departement = EXCLUDED.departement,
+                            code_insee = EXCLUDED.code_insee,
+                            codes_postaux = EXCLUDED.codes_postaux,
+                            rayon_urbain_km = EXCLUDED.rayon_urbain_km,
+                            centre_geom = EXCLUDED.centre_geom,
+                            gare_geom = EXCLUDED.gare_geom,
+                            campus_geom = EXCLUDED.campus_geom,
+                            chu_geom = EXCLUDED.chu_geom,
+                            updated_at = NOW()
+                    """),
+                    {
+                        "code": code, "nom": cfg.nom, "dept": cfg.departement,
+                        "insee": cfg.code_insee, "cps": list(cfg.codes_postaux), "rayon": cfg.rayon_urbain_km,
+                        "c_lon": cfg.centre_lon, "c_lat": cfg.centre_lat,
+                        "g_lon": cfg.gare_lon, "g_lat": cfg.gare_lat,
+                        "u_lon": cfg.campus_lon, "u_lat": cfg.campus_lat,
+                        "h_lon": cfg.chu_lon, "h_lat": cfg.chu_lat,
+                    },
+                )
+            else:
+                conn.execute(
+                    text("""
+                        INSERT INTO ref_territoires (
+                            code_territoire, nom, departement, code_insee, codes_postaux, rayon_urbain_km, actif
+                        ) VALUES (
+                            :code, :nom, :dept, :insee, :cps, :rayon, TRUE
+                        )
+                        ON CONFLICT (code_territoire) DO UPDATE SET
+                            nom = EXCLUDED.nom,
+                            departement = EXCLUDED.departement,
+                            code_insee = EXCLUDED.code_insee,
+                            codes_postaux = EXCLUDED.codes_postaux,
+                            rayon_urbain_km = EXCLUDED.rayon_urbain_km,
+                            updated_at = NOW()
+                    """),
+                    {
+                        "code": code, "nom": cfg.nom, "dept": cfg.departement,
+                        "insee": cfg.code_insee, "cps": list(cfg.codes_postaux), "rayon": cfg.rayon_urbain_km,
+                    },
+                )
+
+        tables_offres = [
+            TABLE_HIST_BRUT, TABLE_HIST_FEAT, TABLE_RECENT_BRUT, TABLE_RECENT_FEAT, TABLE_PREDICTIONS
+        ]
+        for t in tables_offres:
+            exists = bool(conn.execute(text("SELECT to_regclass(:t) IS NOT NULL"), {"t": f'"{t}"'}).scalar())
+            if not exists:
+                continue
+            conn.execute(text(f'ALTER TABLE "{t}" ADD COLUMN IF NOT EXISTS code_territoire VARCHAR(32) DEFAULT \'poitiers\''))
+            conn.execute(text(f'ALTER TABLE "{t}" ADD COLUMN IF NOT EXISTS est_ville_centre BOOLEAN DEFAULT TRUE'))
+            if has_pgis:
+                conn.execute(text(f'ALTER TABLE "{t}" ADD COLUMN IF NOT EXISTS geom GEOGRAPHY(Point, 4326)'))
+            conn.execute(text(f'UPDATE "{t}" SET code_territoire = \'poitiers\' WHERE code_territoire IS NULL'))
+            cols = {
+                r[0]
+                for r in conn.execute(
+                    text("SELECT column_name FROM information_schema.columns WHERE table_name = :t"),
+                    {"t": t},
+                ).fetchall()
+            }
+            if "code_postal" in cols:
+                conn.execute(text(f"""
+                    UPDATE "{t}"
+                    SET est_ville_centre = FALSE
+                    WHERE code_territoire = 'poitiers'
+                      AND code_postal IS NOT NULL
+                      AND TRIM(CAST(code_postal AS TEXT)) NOT IN ('86000', '86000.0')
+                """))
+            if has_pgis:
+                _backfill_geom_sql(conn, t)
+                conn.execute(text(f'CREATE INDEX IF NOT EXISTS "idx_{t}_geom" ON "{t}" USING GIST (geom)'))
+            elif {"latitude", "longitude"}.issubset(cols):
+                conn.execute(text(f'CREATE INDEX IF NOT EXISTS "idx_{t}_lat_lon" ON "{t}" (latitude, longitude)'))
+            conn.execute(text(f'CREATE INDEX IF NOT EXISTS "idx_{t}_terr_centre" ON "{t}" (code_territoire, est_ville_centre)'))
+
+    print("[PostgreSQL] Migration non destructive multi-villes (12 villes-centres) terminée.")
+    return True
+
+
+def get_ids_connus(source: str | None = None, code_territoire: str | None = None) -> set[str]:
+    """Retourne les IDs d'annonces déjà connus en base (pour scraping incrémental)."""
+    if not db_disponible():
+        return set()
+    clauses = []
+    params: dict = {}
+    if source:
+        clauses.append("source = :src")
+        params["src"] = source
+    if code_territoire:
+        clauses.append("code_territoire = :terr")
+        params["terr"] = code_territoire
+    where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
+    try:
+        with engine.connect() as conn:
+            rows = conn.execute(text(f'SELECT id FROM "{TABLE_HIST_BRUT}"{where}'), params).fetchall()
+        return {str(r[0]) for r in rows if r[0] is not None}
+    except Exception:
+        return set()
 
 
 @contextmanager
@@ -137,6 +347,203 @@ def verrou_pipeline(lock_id: int = 86001):
         finally:
             if acquired:
                 conn.execute(text("SELECT pg_advisory_unlock(:lid)"), {"lid": lock_id})
+
+
+@contextmanager
+def verrou_pipeline_territoire(source: str, code_territoire: str):
+    """Advisory lock déterministe scopé sur `(source, code_territoire)`."""
+    import zlib
+    lid = zlib.crc32(f"{source}:{code_territoire}".encode("utf-8")) & 0x7FFFFFFF
+    with verrou_pipeline(lock_id=lid) as acq:
+        yield acq
+
+
+def est_en_cooldown(source: str, code_territoire: str) -> bool:
+    """Vérifie si la source ou le couple `(source, code_territoire)` est en cooldown (ex. 3h après blocage)."""
+    if not db_disponible():
+        return False
+    try:
+        with engine.connect() as conn:
+            src_cd = conn.execute(
+                text("SELECT cooldown_until > NOW() FROM source_circuit_breaker WHERE source = :s"),
+                {"s": source},
+            ).scalar()
+            if src_cd:
+                return True
+            terr_cd = conn.execute(
+                text("SELECT cooldown_until > NOW() FROM scraping_state WHERE source = :s AND code_territoire = :t"),
+                {"s": source, "t": code_territoire},
+            ).scalar()
+            return bool(terr_cd)
+    except Exception:
+        return False
+
+
+def enregistrer_succes_scrape(source: str, code_territoire: str, nb_annonces: int, scrape_complet: bool = True):
+    """Enregistre un passage réussi et réinitialise le compteur d'échecs."""
+    if not db_disponible():
+        return
+    try:
+        with engine.begin() as conn:
+            conn.execute(
+                text("""
+                    INSERT INTO scraping_state (
+                        source, code_territoire, last_scraped_at, last_success_at,
+                        last_scrape_status, scrape_complet, cooldown_until, consecutive_failures,
+                        nb_annonces_vues, last_error, updated_at
+                    ) VALUES (
+                        :s, :t, NOW(), NOW(), 'ok', :comp, NULL, 0, :nb, NULL, NOW()
+                    )
+                    ON CONFLICT (source, code_territoire) DO UPDATE SET
+                        last_scraped_at = NOW(),
+                        last_success_at = NOW(),
+                        last_scrape_status = 'ok',
+                        scrape_complet = EXCLUDED.scrape_complet,
+                        cooldown_until = NULL,
+                        consecutive_failures = 0,
+                        nb_annonces_vues = EXCLUDED.nb_annonces_vues,
+                        last_error = NULL,
+                        updated_at = NOW()
+                """),
+                {"s": source, "t": code_territoire, "comp": bool(scrape_complet), "nb": int(nb_annonces)},
+            )
+            conn.execute(
+                text("""
+                    INSERT INTO source_circuit_breaker (source, cooldown_until, blocked_reason, consecutive_blocks, updated_at)
+                    VALUES (:s, NULL, NULL, 0, NOW())
+                    ON CONFLICT (source) DO UPDATE SET
+                        cooldown_until = NULL, blocked_reason = NULL, consecutive_blocks = 0, updated_at = NOW()
+                """),
+                {"s": source},
+            )
+    except Exception as e:
+        print(f"[ScrapingState] Erreur enregistrer_succes_scrape : {e}")
+
+
+def enregistrer_blocage_scrape(source: str, code_territoire: str, motif: str, cooldown_hours: int = 3):
+    """Circuit-breaker : pose un cooldown de 3h en DB lorsqu'un site bloque le scraping."""
+    if not db_disponible():
+        return
+    try:
+        with engine.begin() as conn:
+            conn.execute(
+                text(f"""
+                    INSERT INTO scraping_state (
+                        source, code_territoire, last_scraped_at, last_scrape_status, scrape_complet,
+                        cooldown_until, consecutive_failures, last_error, updated_at
+                    ) VALUES (
+                        :s, :t, NOW(), 'blocked', FALSE,
+                        NOW() + INTERVAL '{int(cooldown_hours)} hours', 1, :m, NOW()
+                    )
+                    ON CONFLICT (source, code_territoire) DO UPDATE SET
+                        last_scraped_at = NOW(),
+                        last_scrape_status = 'blocked',
+                        scrape_complet = FALSE,
+                        cooldown_until = NOW() + INTERVAL '{int(cooldown_hours)} hours',
+                        consecutive_failures = scraping_state.consecutive_failures + 1,
+                        last_error = EXCLUDED.last_error,
+                        updated_at = NOW()
+                """),
+                {"s": source, "t": code_territoire, "m": str(motif)[:500]},
+            )
+            conn.execute(
+                text(f"""
+                    INSERT INTO source_circuit_breaker (
+                        source, cooldown_until, blocked_reason, blocked_at, consecutive_blocks, updated_at
+                    ) VALUES (
+                        :s, NOW() + INTERVAL '{int(cooldown_hours)} hours', :m, NOW(), 1, NOW()
+                    )
+                    ON CONFLICT (source) DO UPDATE SET
+                        cooldown_until = NOW() + INTERVAL '{int(cooldown_hours)} hours',
+                        blocked_reason = EXCLUDED.blocked_reason,
+                        blocked_at = NOW(),
+                        consecutive_blocks = source_circuit_breaker.consecutive_blocks + 1,
+                        updated_at = NOW()
+                """),
+                {"s": source, "m": str(motif)[:500]},
+            )
+        print(f"[Circuit-Breaker] Source '{source}' ({code_territoire}) bloquée -> cooldown {cooldown_hours}h : {motif}")
+    except Exception as e:
+        print(f"[Circuit-Breaker] Erreur enregistrement cooldown : {e}")
+
+
+def prochaine_ville_eligible(source: str = "bienici", min_interval_minutes: int = 80) -> str | None:
+    """
+    Sélectionne dynamiquement la prochaine ville-centre éligible (cadence 1h20 = 80 min),
+    en sautant toute ville en cooldown 3h sans décaler les autres.
+    """
+    if not db_disponible():
+        return "poitiers"
+    try:
+        with engine.connect() as conn:
+            last_global = conn.execute(
+                text("""
+                    SELECT MAX(last_scraped_at)
+                    FROM scraping_state
+                    WHERE last_scrape_status = 'ok'
+                """)
+            ).scalar()
+            if last_global is not None:
+                recent = conn.execute(
+                    text("SELECT :lg > NOW() - (:mins || ' minutes')::INTERVAL"),
+                    {"lg": last_global, "mins": int(min_interval_minutes)},
+                ).scalar()
+                if recent:
+                    return None
+
+            src_blocked = conn.execute(
+                text("SELECT cooldown_until > NOW() FROM source_circuit_breaker WHERE source = :s"),
+                {"s": source},
+            ).scalar()
+            if src_blocked:
+                return None
+
+            row = conn.execute(
+                text("""
+                    SELECT rt.code_territoire
+                    FROM ref_territoires rt
+                    LEFT JOIN scraping_state ss
+                      ON ss.code_territoire = rt.code_territoire AND ss.source = :s
+                    WHERE rt.actif = TRUE
+                      AND (ss.cooldown_until IS NULL OR ss.cooldown_until <= NOW())
+                    ORDER BY ss.last_scraped_at ASC NULLS FIRST, rt.code_territoire ASC
+                    LIMIT 1
+                """),
+                {"s": source},
+            ).fetchone()
+            return str(row[0]) if row else None
+    except Exception:
+        return None
+
+
+def get_etat_scraping() -> dict[str, dict]:
+    """Retourne fraîcheur et statut cooldown par ville pour le Radar / Monitoring."""
+    if not db_disponible():
+        return {}
+    try:
+        with engine.connect() as conn:
+            rows = conn.execute(text("""
+                SELECT
+                    rt.code_territoire,
+                    rt.nom,
+                    MAX(ss.last_success_at) AS last_success_at,
+                    MAX(ss.cooldown_until) AS cooldown_until,
+                    BOOL_OR(COALESCE(ss.cooldown_until > NOW(), FALSE)) AS en_cooldown
+                FROM ref_territoires rt
+                LEFT JOIN scraping_state ss ON ss.code_territoire = rt.code_territoire
+                GROUP BY rt.code_territoire, rt.nom
+            """)).fetchall()
+        out = {}
+        for code, nom, last_ok, cd_until, en_cd in rows:
+            out[str(code)] = {
+                "nom": str(nom),
+                "last_success_at": last_ok.isoformat() if last_ok else None,
+                "cooldown_until": cd_until.isoformat() if cd_until else None,
+                "en_cooldown": bool(en_cd),
+            }
+        return out
+    except Exception:
+        return {}
 
 
 def enregistrer_quarantaine(df_rejets: pd.DataFrame, motif_col: str = "motif_rejet"):
@@ -288,16 +695,19 @@ def synchroniser_offres_brutes(
     sources_scannees: list[str] | None = None,
     marquer_absentes_expirees: bool = True,
     jours_fraicheur_max: int = 45,
+    code_territoire: str | None = None,
+    scrape_complet: bool = True,
 ) -> tuple[pd.DataFrame, pd.DataFrame, dict]:
     """
     Met à jour l'historique brut et la table des offres récentes brutes à partir d'un scan :
     1. Détecte les NOUVELLES offres (id jamais vu -> ajoutées avec `est_active=True`).
     2. Met à jour les offres DÉJÀ CONNUES vues dans le scan (`date_derniere_vue = maintenant`,
        détection des baisses de prix `evolution_prix_euro`).
-    3. Détecte les offres PLUS À JOUR : toute offre d'une source scannée qui n'apparaît plus
-       dans le scan passe automatiquement à `est_active=False`, `statut='expiree'` et
-       `date_desactivation=maintenant`.
+    3. Détecte les offres PLUS À JOUR : uniquement si `marquer_absentes_expirees` ET `scrape_complet`
+       sont vrais, et scopé strictement sur `(source, code_territoire)`.
     """
+    from src.ingestion.territoires import est_ville_centre, resoudre_territoire
+
     maintenant = pd.Timestamp.now(tz="UTC").floor("s")
     df_scan = df_nouveau_scan.copy()
     df_scan = df_scan.dropna(subset=["id"]).drop_duplicates(subset="id", keep="first").copy()
@@ -306,6 +716,20 @@ def synchroniser_offres_brutes(
     urls_existantes = df_scan["url"].tolist() if "url" in df_scan.columns else [""] * len(df_scan)
     df_scan["source"] = [
         detecter_source(i, u, s) for i, u, s in zip(df_scan["id"], urls_existantes, sources_existantes)
+    ]
+    if code_territoire:
+        if "code_territoire" not in df_scan.columns:
+            df_scan["code_territoire"] = code_territoire
+        else:
+            df_scan["code_territoire"] = df_scan["code_territoire"].fillna(code_territoire)
+    else:
+        df_scan["code_territoire"] = [
+            resoudre_territoire(cp, v) or "poitiers"
+            for cp, v in zip(df_scan.get("code_postal", [""] * len(df_scan)), df_scan.get("ville", [""] * len(df_scan)))
+        ]
+    df_scan["est_ville_centre"] = [
+        est_ville_centre(cp, v)
+        for cp, v in zip(df_scan.get("code_postal", [""] * len(df_scan)), df_scan.get("ville", [""] * len(df_scan)))
     ]
 
     if sources_scannees is None:
@@ -385,26 +809,31 @@ def synchroniser_offres_brutes(
             )
 
         # 2. Offres d'une source scannée qui ont disparu du scan -> marquées expirées
-        # Garde-fou : on ne désactive pour une source que si le scan atteint >= 50% du parc actif connu
+        # Garde-fou : uniquement si scrape_complet=True, scopé par (source, code_territoire), et >= 50% du parc actif
         nb_expirees = 0
-        if marquer_absentes_expirees:
-            for src in sources_scannees:
-                nb_actives_src = int(((df_hist["source"] == src) & (df_hist["est_active"] == True)).sum())  # noqa: E712
-                nb_scan_src = int((df_scan["source"] == src).sum())
-                if nb_actives_src >= 20 and nb_scan_src < 0.50 * nb_actives_src:
-                    print(f"[Garde-fou Expiration] Source '{src}' : scan trop petit ({nb_scan_src}/{nb_actives_src} actives), expiration ignorée.")
-                    continue
-                mask_disparues = (
-                    (df_hist["source"] == src)
-                    & (~df_hist["id"].isin(ids_scan))
-                    & (df_hist["est_active"] == True)  # noqa: E712
-                )
-                n_exp = int(mask_disparues.sum())
-                if n_exp > 0:
-                    nb_expirees += n_exp
-                    df_hist.loc[mask_disparues, "est_active"] = False
-                    df_hist.loc[mask_disparues, "statut"] = "expiree"
-                    df_hist.loc[mask_disparues, "date_desactivation"] = maintenant
+        if marquer_absentes_expirees and scrape_complet:
+            if "code_territoire" not in df_hist.columns:
+                df_hist["code_territoire"] = "poitiers"
+            terrs_cibles = [code_territoire] if code_territoire else sorted(df_scan["code_territoire"].dropna().unique().tolist())
+            for terr in terrs_cibles:
+                for src in sources_scannees:
+                    mask_parc = (df_hist["source"] == src) & (df_hist["code_territoire"] == terr)
+                    nb_actives_src = int((mask_parc & (df_hist["est_active"] == True)).sum())  # noqa: E712
+                    nb_scan_src = int(((df_scan["source"] == src) & (df_scan["code_territoire"] == terr)).sum())
+                    if nb_actives_src >= 20 and nb_scan_src < 0.50 * nb_actives_src:
+                        print(f"[Garde-fou Expiration] {src}/{terr} : scan trop petit ({nb_scan_src}/{nb_actives_src} actives), expiration ignorée.")
+                        continue
+                    mask_disparues = (
+                        mask_parc
+                        & (~df_hist["id"].isin(ids_scan))
+                        & (df_hist["est_active"] == True)  # noqa: E712
+                    )
+                    n_exp = int(mask_disparues.sum())
+                    if n_exp > 0:
+                        nb_expirees += n_exp
+                        df_hist.loc[mask_disparues, "est_active"] = False
+                        df_hist.loc[mask_disparues, "statut"] = "expiree"
+                        df_hist.loc[mask_disparues, "date_desactivation"] = maintenant
 
         # 3. Ajout des nouvelles offres
         if nouvelles_ids:

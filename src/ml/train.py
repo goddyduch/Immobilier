@@ -45,12 +45,12 @@ def construire_modele() -> TransformedTargetRegressor:
         remainder="passthrough",
     )
     hgb = HistGradientBoostingRegressor(
-        max_depth=3, learning_rate=0.05, max_iter=300, min_samples_leaf=8, random_state=0,
+        max_depth=4, learning_rate=0.05, max_iter=350, min_samples_leaf=8, l2_regularization=1.0, random_state=0,
     )
     huber = Pipeline([
         ("imp", SimpleImputer(strategy="median")),
         ("reg", GradientBoostingRegressor(
-            loss="huber", n_estimators=300, max_depth=3, learning_rate=0.05,
+            loss="huber", n_estimators=350, max_depth=4, learning_rate=0.05,
             min_samples_leaf=8, subsample=0.85, random_state=0,
         )),
     ])
@@ -81,8 +81,8 @@ def construire_modele_quantile(quantile: float) -> TransformedTargetRegressor:
     modele = Pipeline([
         ("prepa", prepa),
         ("gbm", HistGradientBoostingRegressor(
-            loss="quantile", quantile=quantile, max_depth=3,
-            learning_rate=0.05, max_iter=250, min_samples_leaf=10, random_state=0)),
+            loss="quantile", quantile=quantile, max_depth=5,
+            learning_rate=0.05, max_iter=300, min_samples_leaf=8, random_state=0)),
     ])
     return TransformedTargetRegressor(regressor=modele, func=np.log, inverse_func=np.exp)
 
@@ -429,9 +429,9 @@ def entrainer_et_sauvegarder_modele(
     modele_final = construire_modele()
     modele_final.fit(X_hist, y_hist)
 
-    modele_q10 = construire_modele_quantile(0.10)
+    modele_q10 = construire_modele_quantile(0.15)
     modele_q10.fit(X_hist, y_hist)
-    modele_q90 = construire_modele_quantile(0.90)
+    modele_q90 = construire_modele_quantile(0.85)
     modele_q90.fit(X_hist, y_hist)
 
     oof_par_id = dict(zip(df_hist_eval["id"].astype(str), df_hist_eval["prix_predit"]))

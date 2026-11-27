@@ -19,6 +19,8 @@ class ShapFactor(BaseModel):
     feature: str
     label: str
     impact_euro: float
+    impact_pct: float = 0.0
+    description: str = ""
 
 
 class ComparableItem(BaseModel):
@@ -28,6 +30,16 @@ class ComparableItem(BaseModel):
     surface_m2: float
     prix: float
     pm2: float
+    pm2_ajuste: float | None = None
+    poids_pct: float | None = None
+    date_transaction: str = ""
+    age_mois: float = 0.0
+    quartier: str = ""
+    pieces: int | None = None
+    dpe: str | None = None
+    a_exterieur: bool = False
+    a_parking: bool = False
+    a_ascenseur: bool = False
     travaux_euro: float = 0.0
     similarite_pct: float
     url: str = ""
@@ -105,6 +117,7 @@ class OpportunitiesResponse(BaseModel):
     facets: OpportunitiesFacets
     total_filtered: int
     items: list[OpportunityItem]
+    fraicheur_villes: dict[str, Any] = Field(default_factory=dict)
 
 
 class EstimateRequest(BaseModel):
@@ -112,9 +125,9 @@ class EstimateRequest(BaseModel):
     surface_m2: float = Field(..., gt=9, le=1000)
     pieces: int = Field(default=3, ge=1, le=30)
     nbr_chambres: int | None = Field(default=None, ge=0, le=20)
-    ville: str = "Poitiers"
-    code_postal: str = "86000"
-    quartier: str = "Centre-ville"
+    ville: str = ""
+    code_postal: str = ""
+    quartier: str = ""
     latitude: float | None = None
     longitude: float | None = None
     etage: float | None = None
@@ -152,6 +165,8 @@ class EstimateResponse(BaseModel):
     loyer_bas: float
     loyer_haut: float
     rendement_brut_pct: float | None = None
+    ville_couverte: bool = True
+    avertissement_couverture: str | None = None
     shap_facteurs: list[ShapFactor]
     comparables: list[ComparableItem]
     latence_ms: float
@@ -236,6 +251,18 @@ class DvfAnalysisResponse(BaseModel):
     economie_mediane_euro: float
     par_tranche: list[DvfTrancheStat]
     par_dpe: list[dict[str, Any]]
+    villes_disponibles: list[str] = Field(default_factory=list)
+
+
+class EvaluationResponse(BaseModel):
+    model_version: str
+    date_evaluation: str
+    approche_retenue: str
+    global_metrics: dict[str, Any]
+    comparatif_modeles: dict[str, Any]
+    par_ville: list[dict[str, Any]]
+    par_categorie_taille: list[dict[str, Any]]
+    avant_apres: dict[str, Any]
 
 
 class NegotiationRequest(BaseModel):

@@ -1,20 +1,38 @@
+import argparse
 import asyncio
-import json
 import csv
-import re
+import json
+import os
 import random
+import re
+import time
 from pathlib import Path
 from playwright.async_api import async_playwright
+
+from src.ingestion import db as DB
+from src.ingestion.territoires import get_territoire
 
 DOSSIER = Path("session_jinka")
 DOSSIER.mkdir(exist_ok=True)
 
-# --- AJOUT --- liste qui reçoit toutes les réponses JSON de la page
 reponses_json = []
 
-# --- AJOUT 2 --- dossier pour garder le HTML brut de chaque annonce
 DOSSIER_HTML = Path("annonces_html")
 DOSSIER_HTML.mkdir(exist_ok=True)
+
+
+def purger_html_anciens(jours_ttl: int = 7) -> int:
+    """RGPD & stockage : purge les fichiers HTML bruts de plus de `jours_ttl` jours."""
+    seuil = time.time() - jours_ttl * 86400
+    nb = 0
+    for f in DOSSIER_HTML.glob("*.html"):
+        try:
+            if f.stat().st_mtime < seuil:
+                f.unlink()
+                nb += 1
+        except Exception:
+            pass
+    return nb
 
 
 # --- AJOUT 2 --- lecture des infos visibles sur la carte de la liste
@@ -114,166 +132,168 @@ async def extraire_annonce(context, url: str) -> dict:
     return resultat
 
 
-async def main():
+def _lire_url_jinka_territoire(code_territoire: str) -> str | None:
+    """Lit `jinka_search_url` depuis PostgreSQL `ref_territoires` ou `JINKA_URLS_JSON`."""
+    urls_env = os.getenv("JINKA_URLS_JSON")
+    if urls_env:
+        try:
+            mapping = json.loads(urls_env)
+            if code_territoire in mapping:
+                return mapping[code_territoire]
+        except Exception:
+            pass
+    if DB.db_disponible():
+        try:
+            with DB.engine.connect() as conn:
+                u = conn.execute(
+                    DB.text("SELECT jinka_search_url FROM ref_territoires WHERE code_territoire = :c"),
+                    {"c": code_territoire},
+                ).scalar()
+                if u:
+                    return str(u)
+        except Exception:
+            pass
+    return None
+
+
+def _detecter_blocage_page(html: str) -> str | None:
+    """Détecte un CAPTCHA, Cloudflare, 403/429 ou blocage anti-bot sans tenter de le contourner."""
+    low = (html or "").lower()
+    for motif in ("captcha", "cloudflare", "verify you are human", "access denied", "too many requests"):
+        if motif in low:
+            return f"Blocage détecté ({motif})"
+    return None
+
+
+async def run_jinka(
+    code_territoire: str = "poitiers",
+    dry_run: bool = False,
+    max_annonces: int | None = None,
+    headless: bool | None = None,
+):
+    cfg = get_territoire(code_territoire)
+    if not cfg:
+        raise ValueError(f"Territoire inconnu : {code_territoire}")
+
+    if not dry_run and DB.est_en_cooldown("jinka", cfg.code_territoire):
+        print(f"[Jinka] {cfg.nom} en cooldown (3h) -> passage ignoré.")
+        return []
+
+    purger_html_anciens(jours_ttl=7)
+    is_headless = (os.getenv("JINKA_HEADLESS", "1") == "1") if headless is None else headless
+    search_url = _lire_url_jinka_territoire(cfg.code_territoire)
+    if not search_url and cfg.code_territoire != "poitiers":
+        print(f"[Jinka] Aucune `jinka_search_url` configurée pour {cfg.nom} -> Jinka ignoré pour cette ville.")
+        return []
+
     async with async_playwright() as p:
         context = await p.chromium.launch_persistent_context(
             user_data_dir=str(DOSSIER.resolve()),
-            headless=False,
+            headless=is_headless,
         )
 
         page = context.pages[0] if context.pages else await context.new_page()
 
-        # --- AJOUT --- écoute des appels réseau (avant la navigation)
         async def on_response(response):
             if response.request.resource_type in ("xhr", "fetch"):
                 try:
                     data = await response.json()
                 except Exception:
                     return
-                print("JSON reçu :", response.url)
                 reponses_json.append({"url": response.url, "data": data})
 
         page.on("response", on_response)
 
-        # Ouvrir Jinka
-        await page.goto(
-            "https://www.jinka.fr/",
-            wait_until="domcontentloaded"
-        )
-
-        #await page.wait_for_load_state("networkidle")
-        # ou : await page.wait_for_selector("css=.ton-selecteur")
-
-        #html = await page.content()
-        #Path("jinka.html").write_text(html, encoding="utf-8")
-        async with page.expect_navigation():
-            await page.get_by_text("Ma Recherche").click()
-
-
-        print("Navigation réussie vers la page de recherche !")
-
-        # --- AJOUT --- attendre le chargement des annonces
-        await page.wait_for_load_state("networkidle")
-
-        # --- AJOUT --- défilement pour charger toutes les annonces
-        hauteur_precedente = 0
-        for _ in range(40):
-            await page.mouse.wheel(0, 5000)
-            await page.wait_for_timeout(1500)
-            hauteur = await page.evaluate("document.documentElement.scrollHeight")
-            if hauteur == hauteur_precedente:
-                break
-            hauteur_precedente = hauteur
-
-        html = await page.content()
-        Path("jinkarecherche.html").write_text(html, encoding="utf-8")
-
-        # --- AJOUT --- sauvegarde de toutes les réponses JSON
-        Path("jinka_reponses.json").write_text(
-            json.dumps(reponses_json, ensure_ascii=False, indent=2),
-            encoding="utf-8",
-        )
-        print(f"{len(reponses_json)} réponses JSON sauvegardées dans jinka_reponses.json")
-
-        # --- AJOUT --- extraction générique : tous les liens de la page
-        liens = await page.eval_on_selector_all(
-            "a[href]",
-            "els => els.map(e => ({texte: e.innerText.trim(), href: e.href}))",
-        )
-        Path("jinka_liens.json").write_text(
-            json.dumps(liens, ensure_ascii=False, indent=2),
-            encoding="utf-8",
-        )
-        print(f"{len(liens)} liens sauvegardés dans jinka_liens.json")
-
-        # --- AJOUT 2 --- ne garder que les liens d'annonces (sans doublons)
-        annonces_liens = []
-        vus = set()
-        for l in liens:
-            if "jinka.fr/ad/" in l["href"] and l["href"] not in vus:
-                vus.add(l["href"])
-                annonces_liens.append(l)
-        print(f"{len(annonces_liens)} annonces trouvées")
-        Path("jinka_liens_annonces.json").write_text(
-            json.dumps(annonces_liens, ensure_ascii=False, indent=2),
-            encoding="utf-8",
-        )
-
-        # --- AJOUT 2 --- ouvrir uniquement les NOUVELLES annonces non présentes en base/cache
-        existantes_par_id = {}
-        if Path("jinka_annonces.json").exists():
-            try:
-                anciennes = json.loads(Path("jinka_annonces.json").read_text(encoding="utf-8"))
-                for a in anciennes:
-                    if a.get("id"):
-                        existantes_par_id[str(a["id"])] = a
-            except Exception:
-                pass
-
         try:
-            from DB import get_ids_connus
-            ids_connus_db = get_ids_connus(source="jinka")
-        except Exception:
-            ids_connus_db = set()
+            if search_url:
+                await page.goto(search_url, wait_until="domcontentloaded")
+            else:
+                await page.goto("https://www.jinka.fr/", wait_until="domcontentloaded")
+                async with page.expect_navigation():
+                    await page.get_by_text("Ma Recherche").click()
 
-        toutes_annonces = []
-        nb_nouvelles = 0
-        nb_reutilisees = 0
+            await page.wait_for_load_state("networkidle")
+            blocage = _detecter_blocage_page(await page.content())
+            if blocage:
+                DB.enregistrer_blocage_scrape("jinka", cfg.code_territoire, blocage, cooldown_hours=3)
+                await context.close()
+                return []
 
-        for i, l in enumerate(annonces_liens, start=1):
-            m_id = re.search(r"/ad/([^?]+)", l["href"])
-            ad_id = m_id.group(1) if m_id else None
-            carte_actuelle = parser_carte(l["texte"])
+            print(f"[Jinka {cfg.nom}] Navigation réussie vers la page de recherche !")
+            max_scrolls = 3 if dry_run else 40
+            hauteur_precedente = 0
+            for _ in range(max_scrolls):
+                await page.mouse.wheel(0, 5000)
+                await page.wait_for_timeout(1500)
+                hauteur = await page.evaluate("document.documentElement.scrollHeight")
+                if hauteur == hauteur_precedente:
+                    break
+                hauteur_precedente = hauteur
 
-            # Si l'annonce est déjà connue, on ne ré-ouvre pas la page Playwright !
-            if ad_id and ad_id in existantes_par_id:
-                details = existantes_par_id[ad_id]
-                details["carte"] = carte_actuelle  # met à jour le prix/infos de la carte
+            liens = await page.eval_on_selector_all(
+                "a[href]",
+                "els => els.map(e => ({texte: e.innerText.trim(), href: e.href}))",
+            )
+            annonces_liens = []
+            vus = set()
+            for l in liens:
+                if "jinka.fr/ad/" in l["href"] and l["href"] not in vus:
+                    vus.add(l["href"])
+                    annonces_liens.append(l)
+            if max_annonces:
+                annonces_liens = annonces_liens[:max_annonces]
+            print(f"[Jinka {cfg.nom}] {len(annonces_liens)} annonces ciblées.")
+
+            ids_connus_db = DB.get_ids_connus(source="jinka", code_territoire=cfg.code_territoire)
+            toutes_annonces = []
+            nb_nouvelles = 0
+
+            for i, l in enumerate(annonces_liens, start=1):
+                m_id = re.search(r"/ad/([^?]+)", l["href"])
+                ad_id = m_id.group(1) if m_id else None
+                carte_actuelle = parser_carte(l["texte"])
+
+                if not dry_run and ad_id and ad_id in ids_connus_db:
+                    continue
+
+                print(f"[{i}/{len(annonces_liens)}] Extraction Jinka : {l['href']}")
+                details = await extraire_annonce(context, l["href"])
+                details["carte"] = carte_actuelle
+                details["code_territoire"] = cfg.code_territoire
                 toutes_annonces.append(details)
-                nb_reutilisees += 1
-                print(f"[{i}/{len(annonces_liens)}] Déjà connue (ignorée) : {ad_id}")
-                continue
+                nb_nouvelles += 1
+                await asyncio.sleep(random.uniform(2, 4))
 
-            print(f"[{i}/{len(annonces_liens)}] NOUVELLE annonce -> extraction : {l['href']}")
-            details = await extraire_annonce(context, l["href"])
-            details["carte"] = carte_actuelle
-            toutes_annonces.append(details)
-            nb_nouvelles += 1
-            await asyncio.sleep(random.uniform(2, 5))  # pause pour ne pas surcharger le site
+            if dry_run:
+                print(json.dumps(toutes_annonces, ensure_ascii=False, indent=2)[:1500])
+                await context.close()
+                return toutes_annonces
 
-        print(f"Bilan Jinka : {nb_nouvelles} nouvelles extraites, {nb_reutilisees} déjà connues toujours actives.")
+            Path("csv").mkdir(exist_ok=True)
+            out_json = Path(f"csv/jinka_{cfg.code_territoire}.json")
+            out_json.write_text(json.dumps(toutes_annonces, ensure_ascii=False, indent=2), encoding="utf-8")
+            DB.enregistrer_succes_scrape("jinka", cfg.code_territoire, len(annonces_liens), scrape_complet=True)
+            await context.close()
+            return toutes_annonces
+        except Exception as e:
+            DB.enregistrer_blocage_scrape("jinka", cfg.code_territoire, str(e), cooldown_hours=3)
+            await context.close()
+            return []
 
-        Path("jinka_annonces.json").write_text(
-            json.dumps(toutes_annonces, ensure_ascii=False, indent=2),
-            encoding="utf-8",
-        )
 
-        # --- AJOUT 2 --- export CSV (une ligne par annonce)
-        lignes_csv = []
-        for a in toutes_annonces:
-            ligne = {"id": a.get("id"), "url": a["url"], "titre": a.get("titre")}
-            ligne.update(a.get("carte", {}))
-            for k, v in (a.get("caracteristiques") or {}).items():
-                ligne[f"carac_{k}"] = v
-            ligne["liens_externes"] = " | ".join(a.get("liens_externes", []))
-            ligne["erreur"] = a.get("erreur")
-            lignes_csv.append(ligne)
-
-        colonnes = []
-        for ligne in lignes_csv:
-            for k in ligne:
-                if k not in colonnes:
-                    colonnes.append(k)
-        Path("csv").mkdir(exist_ok=True)
-        with open("csv/jinka_annonces.csv", "w", newline="", encoding="utf-8-sig") as f:
-            w = csv.DictWriter(f, fieldnames=colonnes, delimiter=";")
-            w.writeheader()
-            w.writerows(lignes_csv)
-        print(f"{len(toutes_annonces)} annonces sauvegardées (jinka_annonces.json / csv/jinka_annonces.csv)")
-
-        import sys
-        if sys.stdin.isatty() and os.getenv("JINKA_HEADLESS", "0") != "1":
-            input("Appuyez sur Entrée dans le terminal pour fermer le navigateur...")
+async def main():
+    parser = argparse.ArgumentParser(description="Scraper Jinka multi-villes")
+    parser.add_argument("--ville", default="poitiers", help="Code territoire cible")
+    parser.add_argument("--dry-run", action="store_true", help="Test léger sans écriture DB")
+    parser.add_argument("--max-annonces", type=int, default=None, help="Limite d'annonces à extraire")
+    parser.add_argument("--visible", action="store_true", help="Afficher la fenêtre Chromium")
+    args, _ = parser.parse_known_args()
+    await run_jinka(
+        code_territoire=args.ville,
+        dry_run=args.dry_run,
+        max_annonces=args.max_annonces,
+        headless=False if args.visible else None,
+    )
 
 
 if __name__ == "__main__":

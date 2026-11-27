@@ -180,33 +180,35 @@ def nettoyer_et_valider_data_contracts(df: pd.DataFrame) -> tuple[pd.DataFrame, 
     return d[~mask_rejet].copy(), df_quarantaine
 
 
-def rafraichir_scan_bienici_en_direct(max_annonces: int = 800) -> pd.DataFrame | None:
+def rafraichir_scan_bienici_en_direct(
+    max_annonces: int = 800,
+    code_territoire: str = "poitiers",
+    nouvelles_seulement: bool = False,
+) -> tuple[pd.DataFrame | None, bool]:
     """
-    Récupère en direct les offres actuellement en ligne sur Bien'ici Grand Poitiers :
-    - Permet d'ajouter les NOUVELLES offres sur Poitiers et ses communes voisines
-    - Permet de détecter les anciennes offres Bien'ici qui ne sont plus en ligne (vendues/expirées)
+    Récupère en direct les offres actuellement en ligne sur Bien'ici pour une ville-centre.
+    Retourne `(df_live, scrape_complet)`.
     """
     try:
         from src.ingestion import bienici as BienIci
 
-        print("\n[Scan en direct Bien'ici Grand Poitiers (nouvelles offres + offres expirées)...]")
-        brutes = BienIci.recuperer_annonces_grand_poitiers(
+        print(f"\n[Scan en direct Bien'ici '{code_territoire}'...]")
+        brutes, scrape_complet = BienIci.recuperer_annonces_territoire(
+            code_territoire=code_territoire,
             type_operation="buy",
-            max_par_commune=250,
-            max_total=max_annonces,
-            nouvelles_seulement=False,
+            max_annonces=max_annonces,
+            nouvelles_seulement=nouvelles_seulement,
         )
         if not brutes:
-            return None
+            return None, scrape_complet
         annonces = [BienIci.simplifier(a) for a in brutes]
-        BienIci.exporter_json(annonces, "annonces_bienici.json")
-        BienIci.exporter_csv(annonces, "csv/annonces_bienici.csv")
         df_live = pd.DataFrame(annonces).drop_duplicates(subset="id", keep="first")
         df_live["source"] = "bienici"
-        return df_live
+        df_live["code_territoire"] = code_territoire
+        return df_live, scrape_complet
     except Exception as e:
-        print(f"[Info Scan Bien'ici] Scan en direct ignoré ({e.__class__.__name__}), utilisation du cache JSON local.")
-        return None
+        print(f"[Info Scan Bien'ici] Scan en direct ignoré ({e.__class__.__name__}), utilisation du cache local.")
+        return None, False
 
 
 def executer_pipeline(
@@ -214,29 +216,27 @@ def executer_pipeline(
     limite_verif_http: int = 30,
     reentrainer: bool = True,
     rafraichir_bienici: bool = True,
+    code_territoire: str | None = "poitiers",
 ):
     print("=" * 78)
-    print("  PIPELINE INCRÉMENTALE : BRUT -> HISTORIQUE / RÉCENT -> TRAIN & PREDICT")
+    print(f"  PIPELINE INCRÉMENTALE MULTI-VILLES ({code_territoire or 'global'})")
     print("=" * 78)
 
-    # 1. Lecture de la base locale initiale (Jinka + Bien'ici, sans MoteurImmo) filtrée 86
+    # 1. Lecture de la base locale initiale (Jinka + Bien'ici, sans MoteurImmo)
     run_id = DB.log_pipeline_run("merge_pipeline", "running")
     df_scan_initial = charger_sources_locales(inclure_moteurimmo=False)
     df_scan_initial, df_q1 = nettoyer_et_valider_data_contracts(df_scan_initial)
     if not df_q1.empty:
         DB.enregistrer_quarantaine(df_q1)
         print(f"[Data Contracts] {len(df_q1)} annonces mises en quarantaine.")
-    if "code_postal" in df_scan_initial.columns:
-        cp_s = df_scan_initial["code_postal"].astype(str).str.strip()
-        df_scan_initial = df_scan_initial[cp_s.str.startswith("86") | (cp_s == "nan") | (cp_s == "")].copy()
     df_hist_brut, df_recent_brut, stats = DB.synchroniser_offres_brutes(
         df_scan_initial,
         marquer_absentes_expirees=False,
     )
 
-    # 2. Scan en direct Bien'ici Grand Poitiers pour récupérer les nouvelles offres et marquer les disparues
-    if rafraichir_bienici:
-        df_live_bienici = rafraichir_scan_bienici_en_direct()
+    # 2. Scan en direct Bien'ici sur la ville-centre cible (expiration scopée sur (source, code_territoire))
+    if rafraichir_bienici and code_territoire:
+        df_live_bienici, scrape_complet = rafraichir_scan_bienici_en_direct(code_territoire=code_territoire)
         if df_live_bienici is not None and not df_live_bienici.empty:
             df_live_bienici, df_q2 = nettoyer_et_valider_data_contracts(df_live_bienici)
             if not df_q2.empty:
@@ -245,6 +245,8 @@ def executer_pipeline(
                 df_live_bienici,
                 sources_scannees=["bienici"],
                 marquer_absentes_expirees=True,
+                code_territoire=code_territoire,
+                scrape_complet=scrape_complet,
             )
 
     # 2b. Déduplication exacte & floue obligatoire avant Photos / FeatureEngineering / Training
@@ -257,20 +259,6 @@ def executer_pipeline(
         DB.ecrire_table_sql(df_hist_brut, DB.TABLE_HIST_BRUT)
         DB.ecrire_table_sql(df_recent_brut, DB.TABLE_RECENT_BRUT)
         print(f"[Déduplication] {nb_dup_h} doublon(s) supprimé(s) avant Feature Engineering.")
-
-    # Nettoyage strict des éventuelles anciennes annonces hors Vienne (ex: 97470 Saint-Benoît Réunion)
-    if "code_postal" in df_hist_brut.columns:
-        cp_h = df_hist_brut["code_postal"].astype(str).str.strip()
-        mask_86 = cp_h.str.startswith("86")
-        if not mask_86.all():
-            nb_hors = int((~mask_86).sum())
-            df_hist_brut = df_hist_brut[mask_86].copy()
-            df_recent_brut = df_hist_brut[df_hist_brut["est_active"] == True].copy()  # noqa: E712
-            DB.ecrire_table_sql(df_hist_brut, DB.TABLE_HIST_BRUT)
-            DB.ecrire_table_sql(df_recent_brut, DB.TABLE_RECENT_BRUT)
-            df_hist_brut.to_csv(DB.CSV_HIST_BRUT, index=False)
-            df_recent_brut.to_csv(DB.CSV_RECENT_BRUT, index=False)
-            print(f"[Nettoyage 86] {nb_hors} annonces hors Vienne (ex: 974/02) supprimées de PostgreSQL.")
 
     print(
         f"[Bilan Synchronisation Brute]\n"

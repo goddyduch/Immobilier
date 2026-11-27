@@ -3,9 +3,11 @@ FROM python:3.11-slim
 WORKDIR /app
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1
+    PYTHONUNBUFFERED=1 \
+    SHELL=/bin/sh \
+    PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 
-# Supercronic pour l'exécution propre des crons dans Docker
+# Supercronic + dépendances système Playwright/Chromium
 ARG SUPERCRONIC_URL=https://github.com/aptible/supercronic/releases/download/v0.2.33/supercronic-linux-amd64
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl ca-certificates libpq-dev gcc \
@@ -15,8 +17,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt \
+    && playwright install --with-deps chromium \
     && pip install --no-cache-dir open-clip-torch torch --index-url https://download.pytorch.org/whl/cpu || true
 
 COPY . .
 
-CMD ["supercronic", "/app/docker/crontab"]
+CMD ["sh", "-c", "supercronic /app/docker/crontab"]

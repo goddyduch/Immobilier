@@ -76,11 +76,14 @@ def cmd_predict(args):
 
 
 def cmd_eval(_args):
-    """Affiche le rapport complet d'évaluation IA, DVF Notaires et négociation à partir de `offres_historique_features`."""
+    """Affiche le rapport complet d'évaluation IA, DVF Notaires et double évaluation multi-villes."""
+    from src.ml import evaluation as ev
+
     df_hist_feat = DB.lire_table_ou_csv(DB.TABLE_HIST_FEAT, DB.CSV_HIST_FEAT)
     if df_hist_feat.empty or "dist_centre_km" not in df_hist_feat.columns:
         df_hist_feat, _ = fe.construire_tables_features(verbose=True)
     tr.evaluer_complet(df_hist_feat, afficher=True)
+    ev.evaluer_multivilles_complet(df_hist_feat)
 
 
 def cmd_improve(args):
@@ -125,27 +128,68 @@ def cmd_check(args):
 
 
 def cmd_scrape(args):
-    """Lance les scrapers Bien'ici et/ou Jinka en mode incrémental."""
+    """Lance les scrapers Bien'ici et/ou Jinka en mode incrémental (avec cadence 1h20 & cooldown 3h)."""
+    from src.ingestion.territoires import resoudre_territoire
+
+    code_terr = None
+    if getattr(args, "next_city", False):
+        code_terr = DB.prochaine_ville_eligible(
+            source="bienici" if args.source in ("bienici", "all") else args.source,
+            min_interval_minutes=getattr(args, "interval_min", 80),
+        )
+        if not code_terr:
+            print("[Scheduler] Aucune ville éligible (intervalle 80 min non écoulé ou cooldown 3h actif).")
+            return
+    else:
+        code_terr = resoudre_territoire(ville=args.ville) or "poitiers"
+
     if args.source in ("bienici", "all"):
         from src.ingestion import bienici as BienIci
+        from src.ingestion import merge as Merge
 
-        print(f"[Scraping Bien'ici — {args.ville} (max {args.max_annonces})]")
-        brutes = BienIci.recuperer_annonces(
-            ville=args.ville,
-            type_operation="buy",
-            max_annonces=args.max_annonces,
-            nouvelles_seulement=not args.complet,
-        )
-        annonces = [BienIci.simplifier(a) for a in brutes]
-        if annonces:
-            BienIci.exporter_json(annonces, "annonces_bienici.json")
-            BienIci.exporter_csv(annonces, "csv/annonces_bienici.csv")
+        with DB.verrou_pipeline_territoire("bienici", code_terr) as acq:
+            if not acq:
+                print(f"[Bien'ici] Verrou déjà actif pour {code_terr}.")
+            else:
+                print(f"[Scraping Bien'ici — {code_terr} (max {args.max_annonces})]")
+                brutes, scrape_complet = BienIci.recuperer_annonces_territoire(
+                    code_territoire=code_terr,
+                    type_operation="buy",
+                    max_annonces=args.max_annonces,
+                    nouvelles_seulement=not args.complet,
+                )
+                annonces = [BienIci.simplifier(a) for a in brutes]
+                if annonces and not getattr(args, "dry_run", False):
+                    df_live = pd.DataFrame(annonces).drop_duplicates(subset="id", keep="first")
+                    df_live["source"] = "bienici"
+                    df_live["code_territoire"] = code_terr
+                    df_live, df_q = Merge.nettoyer_et_valider_data_contracts(df_live)
+                    if not df_q.empty:
+                        DB.enregistrer_quarantaine(df_q)
+                    if not df_live.empty:
+                        DB.synchroniser_offres_brutes(
+                            df_live,
+                            sources_scannees=["bienici"],
+                            marquer_absentes_expirees=bool(args.complet),
+                            code_territoire=code_terr,
+                            scrape_complet=scrape_complet,
+                        )
 
     if args.source in ("jinka", "all"):
         from src.ingestion import jinka as Jinka
 
-        print("[Scraping incrémental Jinka]")
-        asyncio.run(Jinka.main())
+        with DB.verrou_pipeline_territoire("jinka", code_terr) as acq:
+            if not acq:
+                print(f"[Jinka] Verrou déjà actif pour {code_terr}.")
+            else:
+                print(f"[Scraping incrémental Jinka — {code_terr}]")
+                asyncio.run(
+                    Jinka.run_jinka(
+                        code_territoire=code_terr,
+                        dry_run=bool(getattr(args, "dry_run", False)),
+                        max_annonces=args.max_annonces if getattr(args, "dry_run", False) else None,
+                    )
+                )
 
     if args.source in ("moteurimmo", "all"):
         from src.ingestion import moteurimmo as MoteurImmo
@@ -237,7 +281,10 @@ def construire_parser() -> argparse.ArgumentParser:
     # 6. scrape
     p_sc = sub.add_parser("scrape", help="Lance les scrapers Bien'ici, Jinka et/ou MoteurImmo")
     p_sc.add_argument("--source", choices=["bienici", "jinka", "moteurimmo", "all"], default="bienici", help="Source à scraper")
-    p_sc.add_argument("--ville", default="Poitiers", help="Ville cible pour Bien'ici")
+    p_sc.add_argument("--ville", default="poitiers", help="Ville-centre cible (ex: poitiers, tours, angers)")
+    p_sc.add_argument("--next-city", action="store_true", help="Sélectionne automatiquement la prochaine ville éligible (1h20)")
+    p_sc.add_argument("--interval-min", type=int, default=80, help="Intervalle minimum entre deux villes (défaut: 80 min)")
+    p_sc.add_argument("--dry-run", action="store_true", help="Mode test sans écriture en base")
     p_sc.add_argument("--max-annonces", type=int, default=200, help="Nombre max d'annonces Bien'ici")
     p_sc.add_argument("--complet", action="store_true", help="Récupère même les annonces déjà connues")
     p_sc.set_defaults(func=cmd_scrape)

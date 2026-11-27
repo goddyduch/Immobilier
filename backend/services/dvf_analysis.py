@@ -24,14 +24,22 @@ def analyser_dvf(ville: str | None = None, type_bien: str | None = None) -> DvfA
             par_tranche=[], par_dpe=[],
         )
 
+    villes_dispo = sorted(df["ville"].dropna().astype(str).unique().tolist()) if "ville" in df.columns else []
+
     sub = df.copy()
+    if "est_ville_centre" in sub.columns:
+        sub = sub[sub["est_ville_centre"] == True]  # noqa: E712
     if ville and ville != "Toutes" and "ville" in sub.columns:
         sub = sub[sub["ville"].astype(str) == ville]
     if type_bien and type_bien != "Tous" and "type_bien" in sub.columns:
         sub = sub[sub["type_bien"].astype(str) == type_bien]
 
     if sub.empty:
-        sub = df.copy()
+        return DvfAnalysisResponse(
+            nb_offres=0, nb_dvf_total=0, pm2_affiche_median=0.0, pm2_notaire_median=0.0,
+            ecart_global_pct=0.0, taux_nego_median_pct=0.0, economie_mediane_euro=0.0,
+            par_tranche=[], par_dpe=[], villes_disponibles=villes_dispo,
+        )
 
     surf = pd.to_numeric(sub["surface_m2"], errors="coerce").replace(0, np.nan)
     prix_aff = pd.to_numeric(sub.get("prix_reel", sub.get("prix")), errors="coerce")
@@ -89,6 +97,7 @@ def analyser_dvf(ville: str | None = None, type_bien: str | None = None) -> DvfA
         economie_mediane_euro=round(float(eco.median()), 0) if not eco.empty else 0.0,
         par_tranche=par_tranche,
         par_dpe=par_dpe,
+        villes_disponibles=villes_dispo,
     )
 
 

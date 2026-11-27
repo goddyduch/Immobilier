@@ -1,0 +1,281 @@
+{
+  "model_version": "modele_poitiers.joblib",
+  "date_evaluation": "2026-11-26T19:55:23.861435+00:00",
+  "approche_retenue": "hybride_log_prix",
+  "global_metrics": {
+    "nb_biens": 738,
+    "r2": 0.7654,
+    "chi2_stat": 29.45,
+    "chi2_pvalue": 0.0001,
+    "mae": 31808.0,
+    "med_ae": 17241.0,
+    "rmse": 52302.0,
+    "mape": 17.59,
+    "mdape": 12.78,
+    "within_10pct": 39.2,
+    "within_15pct": 55.6,
+    "within_20pct": 68.6,
+    "gain_vs_naif_pct": 26.0,
+    "couverture_q10_q90_pct": 60.2
+  },
+  "comparatif_modeles": {
+    "hybride_log_prix": {
+      "nb_biens": 738,
+      "r2": 0.7654,
+      "chi2_stat": 29.45,
+      "chi2_pvalue": 0.0001,
+      "mae": 31808.0,
+      "med_ae": 17241.0,
+      "rmse": 52302.0,
+      "mape": 17.59,
+      "mdape": 12.78,
+      "within_10pct": 39.2,
+      "within_15pct": 55.6,
+      "within_20pct": 68.6,
+      "gain_vs_naif_pct": 26.0,
+      "couverture_q10_q90_pct": 60.2
+    },
+    "hybride_residus": {
+      "nb_biens": 738,
+      "r2": 0.7678,
+      "chi2_stat": 21.26,
+      "chi2_pvalue": 0.0034,
+      "mae": 31566.0,
+      "med_ae": 18400.0,
+      "rmse": 52029.0,
+      "mape": 17.61,
+      "mdape": 13.18,
+      "within_10pct": 38.2,
+      "within_15pct": 57.3,
+      "within_20pct": 69.0,
+      "gain_vs_naif_pct": 26.6,
+      "couverture_q10_q90_pct": 60.2
+    },
+    "gagnant": "hybride_log_prix"
+  },
+  "par_ville": [
+    {
+      "code_territoire": "poitiers",
+      "nom": "Poitiers",
+      "maturite": "En calibration",
+      "nb_biens": 738,
+      "r2": 0.7654,
+      "chi2_stat": 29.45,
+      "chi2_pvalue": 0.0001,
+      "mae": 31808.0,
+      "med_ae": 17241.0,
+      "rmse": 52302.0,
+      "mape": 17.59,
+      "mdape": 12.78,
+      "within_10pct": 39.2,
+      "within_15pct": 55.6,
+      "within_20pct": 68.6,
+      "gain_vs_naif_pct": 26.0,
+      "couverture_q10_q90_pct": 60.2
+    },
+    {
+      "code_territoire": "tours",
+      "nom": "Tours",
+      "nb_biens": 0,
+      "maturite": "En calibration"
+    },
+    {
+      "code_territoire": "angers",
+      "nom": "Angers",
+      "nb_biens": 0,
+      "maturite": "En calibration"
+    },
+    {
+      "code_territoire": "niort",
+      "nom": "Niort",
+      "nb_biens": 0,
+      "maturite": "En calibration"
+    },
+    {
+      "code_territoire": "le_mans",
+      "nom": "Le Mans",
+      "nb_biens": 0,
+      "maturite": "En calibration"
+    },
+    {
+      "code_territoire": "orleans",
+      "nom": "Orléans",
+      "nb_biens": 0,
+      "maturite": "En calibration"
+    },
+    {
+      "code_territoire": "clermont_ferrand",
+      "nom": "Clermont-Ferrand",
+      "nb_biens": 0,
+      "maturite": "En calibration"
+    },
+    {
+      "code_territoire": "reims",
+      "nom": "Reims",
+      "nb_biens": 0,
+      "maturite": "En calibration"
+    },
+    {
+      "code_territoire": "dijon",
+      "nom": "Dijon",
+      "nb_biens": 0,
+      "maturite": "En calibration"
+    },
+    {
+      "code_territoire": "caen",
+      "nom": "Caen",
+      "nb_biens": 0,
+      "maturite": "En calibration"
+    },
+    {
+      "code_territoire": "limoges",
+      "nom": "Limoges",
+      "nb_biens": 0,
+      "maturite": "En calibration"
+    },
+    {
+      "code_territoire": "besancon",
+      "nom": "Besançon",
+      "nb_biens": 0,
+      "maturite": "En calibration"
+    }
+  ],
+  "par_categorie_taille": [
+    {
+      "categorie": "< 20 m²",
+      "nb_biens": 20,
+      "r2": -0.0004,
+      "chi2_stat": 39.0,
+      "chi2_pvalue": 0.0,
+      "mae": 9962.0,
+      "med_ae": 7491.0,
+      "rmse": 14281.0,
+      "mape": 30.62,
+      "mdape": 10.55,
+      "within_10pct": 50.0,
+      "within_15pct": 65.0,
+      "within_20pct": 65.0,
+      "gain_vs_naif_pct": 8.9,
+      "couverture_q10_q90_pct": 65.0
+    },
+    {
+      "categorie": "20 – 35 m²",
+      "nb_biens": 108,
+      "r2": 0.5733,
+      "chi2_stat": 123.17,
+      "chi2_pvalue": 0.0,
+      "mae": 11197.0,
+      "med_ae": 8083.0,
+      "rmse": 14179.0,
+      "mape": 12.84,
+      "mdape": 10.44,
+      "within_10pct": 46.3,
+      "within_15pct": 63.9,
+      "within_20pct": 77.8,
+      "gain_vs_naif_pct": 12.7,
+      "couverture_q10_q90_pct": 60.2
+    },
+    {
+      "categorie": "35 – 60 m²",
+      "nb_biens": 169,
+      "r2": 0.3242,
+      "chi2_stat": 484000034.28,
+      "chi2_pvalue": 0.0,
+      "mae": 18377.0,
+      "med_ae": 14256.0,
+      "rmse": 24835.0,
+      "mape": 15.76,
+      "mdape": 13.0,
+      "within_10pct": 37.9,
+      "within_15pct": 57.4,
+      "within_20pct": 71.6,
+      "gain_vs_naif_pct": 22.5,
+      "couverture_q10_q90_pct": 56.8
+    },
+    {
+      "categorie": "60 – 90 m²",
+      "nb_biens": 214,
+      "r2": 0.4697,
+      "chi2_stat": 917.49,
+      "chi2_pvalue": 0.0,
+      "mae": 26238.0,
+      "med_ae": 17874.0,
+      "rmse": 35845.0,
+      "mape": 16.41,
+      "mdape": 11.67,
+      "within_10pct": 42.1,
+      "within_15pct": 59.8,
+      "within_20pct": 71.5,
+      "gain_vs_naif_pct": 26.1,
+      "couverture_q10_q90_pct": 63.1
+    },
+    {
+      "categorie": "90 – 130 m²",
+      "nb_biens": 135,
+      "r2": 0.3946,
+      "chi2_stat": 70.6,
+      "chi2_pvalue": 0.0,
+      "mae": 39483.0,
+      "med_ae": 30349.0,
+      "rmse": 54726.0,
+      "mape": 17.68,
+      "mdape": 15.6,
+      "within_10pct": 35.6,
+      "within_15pct": 47.4,
+      "within_20pct": 63.7,
+      "gain_vs_naif_pct": 20.7,
+      "couverture_q10_q90_pct": 58.5
+    },
+    {
+      "categorie": ">= 130 m²",
+      "nb_biens": 92,
+      "r2": 0.3008,
+      "chi2_stat": 261.03,
+      "chi2_pvalue": 0.0,
+      "mae": 87114.0,
+      "med_ae": 71487.0,
+      "rmse": 114659.0,
+      "mape": 26.28,
+      "mdape": 18.75,
+      "within_10pct": 29.3,
+      "within_15pct": 42.4,
+      "within_20pct": 53.3,
+      "gain_vs_naif_pct": 5.8,
+      "couverture_q10_q90_pct": 60.9
+    }
+  ],
+  "avant_apres": {
+    "avant": {
+      "nb_biens": 738,
+      "r2": 0.7654,
+      "chi2_stat": 29.45,
+      "chi2_pvalue": 0.0001,
+      "mae": 31808.0,
+      "med_ae": 17241.0,
+      "rmse": 52302.0,
+      "mape": 17.59,
+      "mdape": 12.78,
+      "within_10pct": 39.2,
+      "within_15pct": 55.6,
+      "within_20pct": 68.6,
+      "gain_vs_naif_pct": 26.0,
+      "couverture_q10_q90_pct": 66.9
+    },
+    "apres": {
+      "nb_biens": 738,
+      "r2": 0.7654,
+      "chi2_stat": 29.45,
+      "chi2_pvalue": 0.0001,
+      "mae": 31808.0,
+      "med_ae": 17241.0,
+      "rmse": 52302.0,
+      "mape": 17.59,
+      "mdape": 12.78,
+      "within_10pct": 39.2,
+      "within_15pct": 55.6,
+      "within_20pct": 68.6,
+      "gain_vs_naif_pct": 26.0,
+      "couverture_q10_q90_pct": 60.2
+    }
+  }
+}

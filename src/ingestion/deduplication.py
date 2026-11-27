@@ -79,37 +79,39 @@ def dedupliquer_dataframe(df: pd.DataFrame) -> tuple[pd.DataFrame, int]:
     d_val = d[valide].drop_duplicates(subset=["_prix_cle", "_surf_cle", "_cp_cle", "_type_cle"], keep="first")
     d_inval = d[~valide]
 
-    # 3. Palier flou multi-agences (même CP, type, |Δsurface| <= 2 m², |Δprix| <= 5 %, distance <= 150 m)
+    # 3. Palier flou multi-agences partitionné par (code_postal, type_bien)
     if len(d_val) > 1:
         kept_idx = []
-        lat_s = pd.to_numeric(d_val.get("latitude"), errors="coerce").to_numpy()
-        lon_s = pd.to_numeric(d_val.get("longitude"), errors="coerce").to_numpy()
-        prix_s = pd.to_numeric(d_val.get("prix"), errors="coerce").to_numpy()
-        surf_s = pd.to_numeric(d_val.get("surface_m2"), errors="coerce").to_numpy()
-        cp_s = d_val["_cp_cle"].to_numpy()
-        type_s = d_val["_type_cle"].to_numpy()
+        for (_, _), grp in d_val.groupby(["_cp_cle", "_type_cle"], sort=False):
+            if len(grp) == 1:
+                kept_idx.append(grp.index[0])
+                continue
+            lat_s = pd.to_numeric(grp.get("latitude"), errors="coerce").to_numpy()
+            lon_s = pd.to_numeric(grp.get("longitude"), errors="coerce").to_numpy()
+            prix_s = pd.to_numeric(grp.get("prix"), errors="coerce").to_numpy()
+            surf_s = pd.to_numeric(grp.get("surface_m2"), errors="coerce").to_numpy()
 
-        supprime = np.zeros(len(d_val), dtype=bool)
-        for i in range(len(d_val)):
-            if supprime[i]:
-                continue
-            kept_idx.append(d_val.index[i])
-            if np.isnan(prix_s[i]) or np.isnan(surf_s[i]) or prix_s[i] <= 0:
-                continue
-            same_grp = (~supprime) & (np.arange(len(d_val)) > i) & (cp_s == cp_s[i]) & (type_s == type_s[i])
-            if not same_grp.any():
-                continue
-            close_surf = np.abs(surf_s - surf_s[i]) <= 2.0
-            close_prix = (np.abs(prix_s - prix_s[i]) / prix_s[i]) <= 0.05
-            cand = same_grp & close_surf & close_prix
-            if cand.any() and not np.isnan(lat_s[i]) and not np.isnan(lon_s[i]):
-                has_gps = (~np.isnan(lat_s)) & (~np.isnan(lon_s))
-                dlat = np.radians(np.where(has_gps, lat_s - lat_s[i], 0.0))
-                dlon = np.radians(np.where(has_gps, lon_s - lon_s[i], 0.0))
-                a = np.sin(dlat / 2.0) ** 2 + np.cos(np.radians(lat_s[i])) * np.cos(np.radians(np.where(has_gps, lat_s, lat_s[i]))) * np.sin(dlon / 2.0) ** 2
-                dist_m = 6371000.0 * 2.0 * np.arcsin(np.sqrt(np.clip(a, 0.0, 1.0)))
-                cand = cand & ((~has_gps) | (dist_m <= 150.0))
-            supprime[cand] = True
+            supprime = np.zeros(len(grp), dtype=bool)
+            for i in range(len(grp)):
+                if supprime[i]:
+                    continue
+                kept_idx.append(grp.index[i])
+                if np.isnan(prix_s[i]) or np.isnan(surf_s[i]) or prix_s[i] <= 0:
+                    continue
+                same_grp = (~supprime) & (np.arange(len(grp)) > i)
+                if not same_grp.any():
+                    continue
+                close_surf = np.abs(surf_s - surf_s[i]) <= 2.0
+                close_prix = (np.abs(prix_s - prix_s[i]) / prix_s[i]) <= 0.05
+                cand = same_grp & close_surf & close_prix
+                if cand.any() and not np.isnan(lat_s[i]) and not np.isnan(lon_s[i]):
+                    has_gps = (~np.isnan(lat_s)) & (~np.isnan(lon_s))
+                    dlat = np.radians(np.where(has_gps, lat_s - lat_s[i], 0.0))
+                    dlon = np.radians(np.where(has_gps, lon_s - lon_s[i], 0.0))
+                    a = np.sin(dlat / 2.0) ** 2 + np.cos(np.radians(lat_s[i])) * np.cos(np.radians(np.where(has_gps, lat_s, lat_s[i]))) * np.sin(dlon / 2.0) ** 2
+                    dist_m = 6371000.0 * 2.0 * np.arcsin(np.sqrt(np.clip(a, 0.0, 1.0)))
+                    cand = cand & ((~has_gps) | (dist_m <= 150.0))
+                supprime[cand] = True
         d_val = d_val.loc[kept_idx]
 
     d_clean = pd.concat([d_val, d_inval], ignore_index=False)

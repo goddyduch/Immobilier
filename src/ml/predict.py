@@ -104,27 +104,12 @@ def predire_sur_offres_recentes(
 
     df_res = tr.estimer_negociation(df_res)
 
-    # 1. Intervalles de prédiction [Q10, Q90]
-    modele_q10 = artefact.get("modele_q10")
-    modele_q90 = artefact.get("modele_q90")
-    if modele_q10 is not None and modele_q90 is not None:
-        q10 = np.round(modele_q10.predict(X_rec), 0)
-        q90 = np.round(modele_q90.predict(X_rec), 0)
-        df_res["prix_predit_q10"] = np.minimum(q10, df_res["prix_predit"] * 0.97)
-        df_res["prix_predit_q90"] = np.maximum(q90, df_res["prix_predit"] * 1.03)
-    else:
-        df_res["prix_predit_q10"] = np.round(df_res["prix_predit"] * 0.88, 0)
-        df_res["prix_predit_q90"] = np.round(df_res["prix_predit"] * 1.12, 0)
-    df_res["intervalle_largeur_pct"] = np.round(
-        (df_res["prix_predit_q90"] - df_res["prix_predit_q10"]) / df_res["prix_predit"].clip(lower=1.0) * 100.0, 1
-    )
-
-    # 2. AVM Comparables ("biens à côté") intégrant les travaux + Score Hybride (75% ML + 25% AVM)
+    # 1. AVM Comparables ("biens à côté") intégrant les travaux + Score Hybride (75% ML + 25% AVM)
     try:
         from src.ml import avm as AVMComparable
         df_hist_brut = DB.lire_table_ou_csv(DB.TABLE_HIST_FEAT, DB.CSV_HIST_FEAT)
-        df_dvf = fe.telecharger_ou_charger_dvf(fe.CHEMIN_DVF_CSV, verbose=False)
-        df_res = AVMComparable.calculer_avm_comparables(df_res, df_marche=df_hist_brut, df_dvf=df_dvf, top_k=5)
+        df_dvf = fe.telecharger_ou_charger_dvf(fe.CHEMIN_DVF_MULTI_CSV, verbose=False)
+        df_res = AVMComparable.calculer_avm_comparables(df_res, df_marche=df_hist_brut, df_dvf=df_dvf, top_k=8)
     except Exception as e:
         print(f"[Prédiction] AVM Comparable ignoré : {e}")
 
@@ -134,6 +119,24 @@ def predire_sur_offres_recentes(
     )
     df_res["ecart_hybride_pct"] = np.round(
         (df_res["prix_reel"] - df_res["prix_hybride"]) / df_res["prix_hybride"].clip(lower=1.0) * 100.0, 1
+    )
+
+    # 2. Intervalles de prédiction centrés sur prix_hybride et resserrés (~14–27% au lieu de 30–70%)
+    modele_q10 = artefact.get("modele_q10")
+    modele_q90 = artefact.get("modele_q90")
+    comp_nb = pd.to_numeric(df_res.get("avm_comp_nb", 0), errors="coerce").fillna(0.0)
+    max_half_pct = np.where(comp_nb >= 4, 0.11, 0.135)
+    if modele_q10 is not None and modele_q90 is not None:
+        raw_q10 = np.round(modele_q10.predict(X_rec), 0)
+        raw_q90 = np.round(modele_q90.predict(X_rec), 0)
+        raw_half = np.maximum(0.06 * df_res["prix_hybride"], (raw_q90 - raw_q10) / 2.0)
+        half = np.minimum(raw_half, max_half_pct * df_res["prix_hybride"])
+    else:
+        half = 0.11 * df_res["prix_hybride"]
+    df_res["prix_predit_q10"] = np.round(df_res["prix_hybride"] - half, 0)
+    df_res["prix_predit_q90"] = np.round(df_res["prix_hybride"] + half, 0)
+    df_res["intervalle_largeur_pct"] = np.round(
+        (df_res["prix_predit_q90"] - df_res["prix_predit_q10"]) / df_res["prix_hybride"].clip(lower=1.0) * 100.0, 1
     )
 
     # 3. Score de confiance (0-100)
@@ -166,20 +169,23 @@ def predire_sur_offres_recentes(
         for row_i in range(len(df_res)):
             p_pred = float(df_res["prix_predit"].iloc[row_i])
             sv = shap_vals[row_i]
+            impacts_pct = (np.exp(sv) - 1.0) * 100.0
             impacts = p_pred * (np.exp(sv) - 1.0)
             paires = [
                 {
                     "feature": feat_names[j],
                     "label": fe.LABELS_FEATURES.get(feat_names[j], feat_names[j]),
                     "impact_euro": round(float(impacts[j]), 0),
+                    "impact_pct": round(float(impacts_pct[j]), 1),
+                    "description": fe.DESCRIPTIONS_FEATURES.get(feat_names[j], ""),
                 }
                 for j in range(len(feat_names))
-                if abs(impacts[j]) >= 250.0
+                if abs(impacts_pct[j]) >= 0.2 or abs(impacts[j]) >= 100.0
             ]
-            paires.sort(key=lambda x: abs(x["impact_euro"]), reverse=True)
-            top5 = paires[:6]
-            shap_json_list.append(json.dumps({"base_euro": round(base_euro, 0), "facteurs": top5}, ensure_ascii=False))
-            shap_resumes.append(" | ".join(f"{x['label']}: {x['impact_euro']:+,.0f}€" for x in top5[:3]))
+            paires.sort(key=lambda x: abs(x["impact_pct"]), reverse=True)
+            top_shap = paires[:35]
+            shap_json_list.append(json.dumps({"base_euro": round(base_euro, 0), "facteurs": top_shap}, ensure_ascii=False))
+            shap_resumes.append(" | ".join(f"{x['label']}: {x['impact_euro']:+,.0f}€" for x in top_shap[:3]))
         df_res["shap_top_facteurs_json"] = shap_json_list
         df_res["shap_resume"] = shap_resumes
     except Exception as e:

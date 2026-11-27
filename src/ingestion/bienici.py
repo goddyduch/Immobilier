@@ -115,16 +115,24 @@ def extraire_quartier(a):
     return a.get("neighborhood")
 
 
+class ScrapingBlockedError(RuntimeError):
+    """Levée lorsque le site bloque les requêtes (403/429 persistant ou CAPTCHA)."""
+
+
 def get_json(url, params=None, essais=3):
-    """GET avec quelques tentatives en cas d'erreur réseau ou de limitation."""
+    """GET avec tentatives et détection de blocage (403 / 429 persistant)."""
     for i in range(essais):
         try:
             r = session.get(url, params=params, timeout=15)
-            if r.status_code == 429:  # trop de requêtes : on attend plus longtemps
+            if r.status_code in (403, 429):
+                if i == essais - 1:
+                    raise ScrapingBlockedError(f"HTTP {r.status_code} sur {url}")
                 time.sleep(5 * (i + 1))
                 continue
             r.raise_for_status()
             return r.json()
+        except ScrapingBlockedError:
+            raise
         except requests.RequestException as e:
             if i == essais - 1:
                 raise
@@ -144,10 +152,44 @@ def trouver_zone(ville):
     return suggestions[0]["zoneIds"]
 
 
-def recuperer_annonces(ville, type_operation="buy", prix_max=None, prix_min=None,
+def trouver_zone_territoire(code_territoire: str) -> list[str]:
+    """Retourne les zoneIds d'une ville-centre (cache PostgreSQL puis `suggest.json`)."""
+    from src.ingestion import db as DB
+    from src.ingestion.territoires import get_territoire
+
+    cfg = get_territoire(code_territoire)
+    if not cfg:
+        raise ValueError(f"Territoire inconnu : {code_territoire}")
+
+    if DB.db_disponible():
+        try:
+            with DB.engine.connect() as conn:
+                cached = conn.execute(
+                    DB.text("SELECT bienici_zone_ids FROM ref_territoires WHERE code_territoire = :c"),
+                    {"c": cfg.code_territoire},
+                ).scalar()
+                if cached and isinstance(cached, list) and len(cached) > 0:
+                    return cached
+        except Exception:
+            pass
+
+    zone_ids = trouver_zone(f"{cfg.nom} {cfg.codes_postaux[0]}")
+    if DB.db_disponible():
+        try:
+            with DB.engine.begin() as conn:
+                conn.execute(
+                    DB.text("UPDATE ref_territoires SET bienici_zone_ids = CAST(:z AS JSONB), updated_at = NOW() WHERE code_territoire = :c"),
+                    {"z": json.dumps(zone_ids), "c": cfg.code_territoire},
+                )
+        except Exception:
+            pass
+    return zone_ids
+
+
+def recuperer_annonces(ville=None, type_operation="buy", prix_max=None, prix_min=None,
                        surface_min=None, surface_max=None, max_annonces=500,
-                       nouvelles_seulement=False):
-    zone_ids = trouver_zone(ville)
+                       nouvelles_seulement=False, zone_ids=None, code_territoire=None):
+    zone_ids = zone_ids or trouver_zone(ville)
     taille_page = 50
     annonces, vues = [], set()
     debut = 0
@@ -155,9 +197,9 @@ def recuperer_annonces(ville, type_operation="buy", prix_max=None, prix_min=None
     ids_connus = set()
     if nouvelles_seulement:
         try:
-            from DB import get_ids_connus
-            ids_connus = get_ids_connus(source="bienici")
-            print(f"{len(ids_connus)} annonces Bien'ici déjà connues en base.")
+            from src.ingestion.db import get_ids_connus
+            ids_connus = get_ids_connus(source="bienici", code_territoire=code_territoire)
+            print(f"{len(ids_connus)} annonces Bien'ici déjà connues en base ({code_territoire or 'global'}).")
         except Exception:
             ids_connus = set()
 
@@ -212,35 +254,72 @@ def recuperer_annonces(ville, type_operation="buy", prix_max=None, prix_min=None
     return annonces[:max_annonces]
 
 
+def recuperer_annonces_territoire(
+    code_territoire: str,
+    type_operation: str = "buy",
+    max_annonces: int = 800,
+    nouvelles_seulement: bool = False,
+) -> tuple[list[dict], bool]:
+    """
+    Récupère les annonces d'une des 12 villes-centres uniquement (avec circuit-breaker 3h).
+    Retourne `(annonces, scrape_complet)`.
+    """
+    from src.ingestion import db as DB
+    from src.ingestion.territoires import get_territoire
+
+    cfg = get_territoire(code_territoire)
+    if not cfg:
+        raise ValueError(f"Territoire inconnu : {code_territoire}")
+
+    if DB.est_en_cooldown("bienici", cfg.code_territoire):
+        print(f"[BienIci] {cfg.nom} en cooldown (3h) -> passage ignoré.")
+        return [], False
+
+    try:
+        zone_ids = trouver_zone_territoire(cfg.code_territoire)
+        lot = recuperer_annonces(
+            ville=cfg.nom,
+            type_operation=type_operation,
+            max_annonces=max_annonces,
+            nouvelles_seulement=nouvelles_seulement,
+            zone_ids=zone_ids,
+            code_territoire=cfg.code_territoire,
+        )
+        cps_valides = set(cfg.codes_postaux)
+        toutes, vues = [], set()
+        for a in lot:
+            cp = str(a.get("postalCode") or "").strip()[:5]
+            if cp and cp not in cps_valides:
+                continue
+            ad_id = str(a.get("id"))
+            if ad_id not in vues:
+                vues.add(ad_id)
+                toutes.append(a)
+        scrape_complet = not nouvelles_seulement
+        DB.enregistrer_succes_scrape("bienici", cfg.code_territoire, len(toutes), scrape_complet=scrape_complet)
+        return toutes[:max_annonces], scrape_complet
+    except ScrapingBlockedError as e:
+        DB.enregistrer_blocage_scrape("bienici", cfg.code_territoire, str(e), cooldown_hours=3)
+        return [], False
+    except Exception as e:
+        print(f"[BienIci {cfg.nom}] Erreur réseau/API : {e}")
+        return [], False
+
+
 def recuperer_annonces_grand_poitiers(
     type_operation="buy",
     max_par_commune=250,
     max_total=800,
     nouvelles_seulement=False,
 ):
-    """Récupère les annonces sur l'ensemble des communes de Grand Poitiers (avec dédoublonnage)."""
-    toutes, vues = [], set()
-    for commune in GRAND_POITIERS_COMMUNES:
-        try:
-            lot = recuperer_annonces(
-                ville=commune,
-                type_operation=type_operation,
-                max_annonces=max_par_commune,
-                nouvelles_seulement=nouvelles_seulement,
-            )
-            for a in lot:
-                cp = str(a.get("postalCode") or "")
-                if cp and not cp.startswith("86"):
-                    continue
-                ad_id = str(a.get("id"))
-                if ad_id not in vues:
-                    vues.add(ad_id)
-                    toutes.append(a)
-            if len(toutes) >= max_total:
-                break
-        except Exception as e:
-            print(f"[BienIci Grand Poitiers] Commune '{commune}' ignorée ({e}).")
-    return toutes[:max_total]
+    """Compatibilité V1 : récupère uniquement Poitiers ville-centre (`86000`)."""
+    annonces, _ = recuperer_annonces_territoire(
+        code_territoire="poitiers",
+        type_operation=type_operation,
+        max_annonces=max_total,
+        nouvelles_seulement=nouvelles_seulement,
+    )
+    return annonces
 
 
 def extraire_photos_urls(a, max_photos=5):

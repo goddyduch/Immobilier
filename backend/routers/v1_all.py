@@ -13,6 +13,7 @@ from backend.schemas.all import (
     DvfAnalysisResponse,
     EstimateRequest,
     EstimateResponse,
+    EvaluationResponse,
     HealthResponse,
     NegotiationRequest,
     NegotiationResponse,
@@ -34,15 +35,40 @@ router = APIRouter(prefix="/v1")
 @router.get("/health", response_model=HealthResponse, tags=["Système"])
 def health(store: ModelStore = Depends(get_model_store)):
     snap = store.get_snapshot()
-    df_pred = DB.lire_table_ou_csv(DB.TABLE_PREDICTIONS, DB.CSV_PREDICTIONS)
+    nb_pred = 0
+    if DB.db_disponible():
+        try:
+            with DB.engine.connect() as conn:
+                nb_pred = int(conn.execute(DB.text(f'SELECT COUNT(*) FROM "{DB.TABLE_PREDICTIONS}"')).scalar() or 0)
+        except Exception:
+            nb_pred = len(DB.lire_table_ou_csv(DB.TABLE_PREDICTIONS, DB.CSV_PREDICTIONS))
+    else:
+        nb_pred = len(DB.lire_table_ou_csv(DB.TABLE_PREDICTIONS, DB.CSV_PREDICTIONS))
     return HealthResponse(
         status="ok" if snap is not None else "degraded",
         model_loaded=snap is not None,
         model_version=snap.version if snap else "none",
         db_available=DB.db_disponible(),
-        nb_offres_predictions=int(len(df_pred)),
-        nb_dvf_reference=int(len(snap.df_dvf_raw)) if snap else 0,
+        nb_offres_predictions=nb_pred,
+        nb_dvf_reference=int(len(snap.df_dvf_raw)) if snap and snap.df_dvf_raw is not None else 0,
     )
+
+
+@router.get("/evaluation", response_model=EvaluationResponse, tags=["Évaluation Modèle"])
+def get_evaluation():
+    import json
+    import os
+    from src.ml import evaluation as ev
+
+    report_path = os.path.join("models", "evaluation_report.json")
+    if os.path.exists(report_path):
+        try:
+            with open(report_path, "r", encoding="utf-8") as f:
+                return EvaluationResponse(**json.load(f))
+        except Exception:
+            pass
+    rapport = ev.evaluer_multivilles_complet(out_json_path=report_path)
+    return EvaluationResponse(**rapport)
 
 
 @router.get("/opportunities", response_model=OpportunitiesResponse, tags=["Radar"])

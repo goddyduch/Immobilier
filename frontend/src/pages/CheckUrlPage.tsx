@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api } from "../api/client";
 import PropertyDrawer from "../components/PropertyDrawer";
 
@@ -11,9 +11,9 @@ export default function CheckUrlPage() {
     type_bien: "flat",
     surface_m2: 60,
     pieces: 3,
-    ville: "Poitiers",
-    code_postal: "86000",
-    quartier: "Centre-ville",
+    ville: "",
+    code_postal: "",
+    quartier: "",
     latitude: "" as string | number,
     longitude: "" as string | number,
     dpe: "D",
@@ -32,6 +32,13 @@ export default function CheckUrlPage() {
   const [loadingEst, setLoadingEst] = useState(false);
   const [err, setErr] = useState("");
   const [drawerDetail, setDrawerDetail] = useState<any>(null);
+  const banTimer = useRef<number | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (banTimer.current) window.clearTimeout(banTimer.current);
+    };
+  }, []);
 
   const handleCheckUrl = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -49,16 +56,22 @@ export default function CheckUrlPage() {
     }
   };
 
-  const searchBan = async (q: string) => {
+  const searchBan = (q: string) => {
     setAdresseQuery(q);
-    if (q.length < 4) { setSuggestions([]); return; }
-    try {
-      const r = await fetch(`https://api-adresse.data.gouv.fr/search/?q=${encodeURIComponent(q)}&limit=5`);
-      const j = await r.json();
-      setSuggestions(j.features || []);
-    } catch {
+    if (banTimer.current) window.clearTimeout(banTimer.current);
+    if (q.length < 4) {
       setSuggestions([]);
+      return;
     }
+    banTimer.current = window.setTimeout(async () => {
+      try {
+        const r = await fetch(`https://api-adresse.data.gouv.fr/search/?q=${encodeURIComponent(q)}&limit=5`);
+        const j = await r.json();
+        setSuggestions(j.features || []);
+      } catch {
+        setSuggestions([]);
+      }
+    }, 280);
   };
 
   const pickBan = (feat: any) => {
@@ -221,31 +234,38 @@ export default function CheckUrlPage() {
       </form>
 
       {estRes && (
-        <div className="bg-slate-900 border border-emerald-500/40 rounded-xl p-5 grid grid-cols-2 sm:grid-cols-5 gap-4">
-          <div>
-            <div className="text-xs text-slate-400">Estimation Hybride</div>
-            <div className="text-2xl font-bold text-emerald-400">{Math.round(estRes.prix_hybride).toLocaleString("fr-FR")} €</div>
-            <div className="text-xs text-slate-400">Latence {estRes.latence_ms} ms</div>
-          </div>
-          <div>
-            <div className="text-xs text-slate-400">Fourchette [Q10–Q90]</div>
-            <div className="text-sm font-semibold text-sky-300 mt-1">
-              {Math.round(estRes.prix_q10).toLocaleString("fr-FR")} € – {Math.round(estRes.prix_q90).toLocaleString("fr-FR")} €
+        <div className="space-y-4">
+          {estRes.avertissement_couverture && (
+            <div className="p-4 rounded-xl bg-amber-50 border border-amber-300 text-amber-800 text-sm font-medium">
+              {estRes.avertissement_couverture}
             </div>
-          </div>
-          <div>
-            <div className="text-xs text-slate-400">Verdict & Confiance</div>
-            <div className="text-lg font-bold">{estRes.verdict}</div>
-            <div className="text-xs text-sky-400">{estRes.score_confiance}/100</div>
-          </div>
-          <div>
-            <div className="text-xs text-slate-400">Travaux estimés</div>
-            <div className="text-lg font-bold text-amber-400">{Math.round(estRes.cout_travaux_estime).toLocaleString("fr-FR")} €</div>
-          </div>
-          <div>
-            <div className="text-xs text-slate-400">Loyer estimé</div>
-            <div className="text-lg font-bold">{Math.round(estRes.loyer_mensuel_estime)} €/mois</div>
-            <div className="text-xs text-slate-400">[{estRes.loyer_bas}–{estRes.loyer_haut} €]</div>
+          )}
+          <div className="bg-white border border-emerald-200 rounded-xl p-5 grid grid-cols-2 sm:grid-cols-5 gap-4 shadow-sm">
+            <div>
+              <div className="text-xs text-slate-500">Estimation Justeprix</div>
+              <div className="text-2xl font-bold text-emerald-600">{Math.round(estRes.prix_hybride).toLocaleString("fr-FR")} €</div>
+              <div className="text-xs text-slate-400">Latence {estRes.latence_ms} ms</div>
+            </div>
+            <div>
+              <div className="text-xs text-slate-500">Fourchette [Q10–Q90]</div>
+              <div className="text-sm font-semibold text-sky-700 mt-1">
+                {Math.round(estRes.prix_q10).toLocaleString("fr-FR")} € – {Math.round(estRes.prix_q90).toLocaleString("fr-FR")} €
+              </div>
+            </div>
+            <div>
+              <div className="text-xs text-slate-500">Verdict & Confiance</div>
+              <div className="text-lg font-bold text-slate-900">{estRes.verdict}</div>
+              <div className="text-xs text-sky-700">{estRes.score_confiance}/100</div>
+            </div>
+            <div>
+              <div className="text-xs text-slate-500">Travaux estimés</div>
+              <div className="text-lg font-bold text-amber-600">{Math.round(estRes.cout_travaux_estime).toLocaleString("fr-FR")} €</div>
+            </div>
+            <div>
+              <div className="text-xs text-slate-500">Loyer estimé</div>
+              <div className="text-lg font-bold text-slate-900">{Math.round(estRes.loyer_mensuel_estime)} €/mois</div>
+              <div className="text-xs text-slate-500">[{estRes.loyer_bas}–{estRes.loyer_haut} €]</div>
+            </div>
           </div>
         </div>
       )}

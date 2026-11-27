@@ -85,111 +85,161 @@ STATS_QUARTIERS_POITIERS = {
 
 LABELS_FEATURES = {
     "surface_m2": "Surface habitable (m²)",
-    "log_surface": "Logarithme de la surface",
-    "sqrt_surface": "Racine de la surface",
-    "inv_surface": "Inverse surface (1 / m²)",
-    "surface_par_piece": "Surface moyenne par pièce (m²/p)",
-    "ratio_chambres": "Ratio Chambres / Pièces",
-    "surface_relative_marche": "Surface relative au marché local",
-    "pm2_voisinage": "Prix/m² Notaire DVF voisinage (800m)",
-    "pm2_dvf_pondere_dist": "Prix/m² DVF pondéré par la distance",
-    "pm2_dvf_taille_proche": "Prix/m² DVF biens de taille proche",
-    "pm2_dvf_tranche_surface": "Prix/m² DVF par tranche de surface",
-    "pm2_dvf_dispersion": "Dispersion €/m² DVF voisinage",
-    "nb_ventes_dvf": "Nb ventes Notaires DVF (800m)",
-    "tendance_dvf_pct": "Tendance prix DVF secteur (%)",
-    "valeur_dvf_ajustee_taille": "Valeur DVF ajustée par taille (€)",
-    "valeur_dvf_nette_travaux": "Valeur DVF nette de travaux (€)",
-    "cout_travaux_estime_euro": "Coût travaux estimé (€)",
-    "cout_travaux_m2": "Coût travaux estimé (€/m²)",
+    "log_surface": "Effet de taille (dégressivité m²)",
+    "sqrt_surface": "Surface (échelle modérée)",
+    "inv_surface": "Effet petite surface (1 / m²)",
+    "surface_par_piece": "Espace moyen par pièce (m²/p)",
+    "ratio_chambres": "Proportion de chambres",
+    "surface_relative_marche": "Taille vs moyenne de la ville",
+    "pm2_voisinage": "Prix/m² des ventes notaires proches",
+    "pm2_dvf_pondere_dist": "Prix/m² notaire pondéré par la distance",
+    "pm2_dvf_taille_proche": "Prix/m² notaire biens de taille proche",
+    "pm2_dvf_tranche_surface": "Prix/m² notaire pour cette taille de bien",
+    "pm2_dvf_dispersion": "Dispersion des prix notaires voisins (€/m²)",
+    "nb_ventes_dvf": "Nombre de ventes notaires proches",
+    "tendance_dvf_pct": "Tendance des prix notaires du secteur (%)",
+    "valeur_dvf_ajustee_taille": "Valeur notaire ajustée à la taille (€)",
+    "valeur_dvf_nette_travaux": "Valeur notaire nette de travaux (€)",
+    "cout_travaux_estime_euro": "Budget travaux estimé (€)",
+    "cout_travaux_m2": "Budget travaux estimé (€/m²)",
     "trav_rafraichissement": "Poste travaux : Rafraîchissement",
-    "trav_cuisine_sdb": "Poste travaux : Cuisine / SDB",
-    "trav_menuiseries": "Poste travaux : Menuiseries",
-    "trav_elec_plomberie": "Poste travaux : Élec. / Plomberie",
-    "trav_gros_oeuvre": "Poste travaux : Gros œuvre / Isol.",
-    "type_bien": "Type de bien (Maison / Appart.)",
-    "quartier": "Quartier / Commune",
-    "dist_centre_km": "Distance Centre-ville (km)",
-    "dist_gare_km": "Distance Gare (km)",
-    "dist_campus_km": "Distance Campus Universitaire (km)",
-    "dist_chu_km": "Distance CHU Milétrie (km)",
-    "dist_futuroscope_km": "Distance Futuroscope (km)",
-    "est_en_qpv": "Situé en zone QPV (0/1)",
-    "dist_qpv_km": "Distance au QPV le plus proche (km)",
-    "revenu_median_secteur": "Revenu médian du secteur (€/an)",
-    "taux_hlm_secteur": "Taux de logements HLM secteur (%)",
-    "part_proprietaires_secteur": "Part propriétaires occupants (%)",
+    "trav_cuisine_sdb": "Rénovation cuisine / salle de bain",
+    "trav_menuiseries": "Rénovation fenêtres / isolation",
+    "trav_elec_plomberie": "Mise aux normes électricité / plomberie",
+    "trav_gros_oeuvre": "Travaux de gros œuvre / structure",
+    "type_bien": "Type de bien (Maison / Appartement)",
+    "ville": "Ville du bien",
+    "quartier": "Quartier / Secteur",
+    "ville_quartier": "Quartier dans la ville",
+    "dist_centre_km": "Distance au centre-ville (km)",
+    "dist_centre_norm": "Éloignement relatif au centre-ville",
+    "dx_centre_km": "Position Est / Ouest vs centre-ville (km)",
+    "dy_centre_km": "Position Nord / Sud vs centre-ville (km)",
+    "dx_norm": "Position Est / Ouest normalisée",
+    "dy_norm": "Position Nord / Sud normalisée",
+    "angle_centre_sin": "Orientation Nord / Sud depuis le centre",
+    "angle_centre_cos": "Orientation Est / Ouest depuis le centre",
+    "tranche_surface": "Catégorie de surface (m²)",
+    "tranche_surface_type": "Catégorie surface × type de bien",
+    "typologie": "Typologie du bien (T1/T2/T3… × type)",
+    "surface_x_maison": "Surface habitable (Maison)",
+    "surface_x_appart": "Surface habitable (Appartement)",
+    "ratio_terrain_bati": "Ratio surface extérieure / habitable",
+    "dist_gare_km": "Proximité de la gare principale (km)",
+    "dist_campus_km": "Proximité pôle universitaire (km)",
+    "dist_chu_km": "Proximité pôle santé / CHU (km)",
+    "dist_centre_vie_km": "Proximité pôle de vie local (km)",
+    "score_centre_vie": "Score d'attractivité & vie de quartier",
+    "est_en_qpv": "Situé en Quartier Prioritaire (QPV)",
+    "dist_qpv_km": "Distance au Quartier Prioritaire (km)",
+    "revenu_median_secteur": "Niveau de vie du micro-quartier (IRIS)",
+    "taux_hlm_secteur": "Part de logements sociaux du secteur (%)",
+    "part_proprietaires_secteur": "Part de propriétaires occupants (%)",
     "taux_vacance_secteur": "Taux de logements vacants (%)",
-    "dpe_num": "Note DPE (A à G)",
+    "dpe_num": "Performance énergétique (DPE)",
     "annee_construction": "Année de construction",
     "age_bien": "Ancienneté du bien (années)",
-    "ges_num": "Note GES (A à G)",
+    "ges_num": "Émissions GES (A à G)",
     "nbr_chambres": "Nombre de chambres",
     "pieces": "Nombre de pièces",
-    "etage": "Étage",
+    "etage": "Étage du logement",
     "est_rdc": "Rez-de-chaussée (0/1)",
-    "etage_eleve_sans_ascenseur": "Étage ≥ 3 sans ascenseur (0/1)",
-    "latitude": "Latitude",
-    "longitude": "Longitude",
-    "txt_longueur": "Longueur du descriptif",
+    "etage_eleve_sans_ascenseur": "Étage ≥ 3 sans ascenseur",
+    "txt_longueur": "Richesse du descriptif de l'annonce",
     "reseau": "Agence / Réseau",
-    "surface_ext_m2": "Surface terrain/jardin extraite (m²)",
-    "charges_annuelles": "Charges annuelles extraites (€)",
-    "llm_etat_score": "Note État du bien (LLM 1-5)",
-    "llm_travaux_score": "Niveau de travaux (LLM 0-3)",
-    "llm_note_offre": "Note Attractivité (LLM /10)",
+    "surface_ext_m2": "Surface extérieure (jardin/terrasse m²)",
+    "charges_annuelles": "Charges annuelles de copropriété (€)",
+    "llm_etat_score": "État général perçu (analyse texte)",
+    "llm_travaux_score": "Ampleur des travaux détectés (texte)",
+    "llm_note_offre": "Qualité globale de l'annonce",
     "vis_nb_photos": "Nombre de photos de l'annonce",
-    "vis_luminosite": "Luminosité moyenne des photos",
-    "vis_contraste": "Contraste moyen des photos",
-    "vis_nettete": "Netteté moyenne des photos",
-    "vis_saturation": "Saturation couleurs photos",
-    "est_mention_carrez": "Mention Loi Carrez explicite (0/1)",
-    "surface_carrez_m2": "Surface Loi Carrez extraite (m²)",
+    "vis_luminosite": "Luminosité des photos",
+    "vis_contraste": "Contraste des photos",
+    "vis_nettete": "Netteté des photos",
+    "vis_saturation": "Qualité visuelle des photos",
+    "est_mention_carrez": "Surface certifiée Loi Carrez",
+    "surface_carrez_m2": "Surface Loi Carrez (m²)",
     "surface_utile_m2": "Surface utile / au sol (m²)",
     "prix_m2_carrez": "Prix au m² Loi Carrez (€/m²)",
     "prix_m2_utile": "Prix au m² surface utile (€/m²)",
-    "dist_arret_bus_m": "Distance arrêt de bus Vitalis le plus proche (m)",
-    "nb_arrets_bus_400m": "Nombre d'arrêts de bus dans un rayon de 400 m",
-    "dist_commerce_alim_m": "Distance commerce alimentaire le plus proche (m)",
-    "nb_commerces_500m": "Nombre de commerces/services dans un rayon de 500 m",
-    "score_commodites_500m": "Indice synthétique commodités & mobilité (0-20)",
-    "loyer_m2_estime": "Loyer mensuel de référence estimé (€/m²/mois)",
-    "loyer_mensuel_estime": "Loyer mensuel estimé du bien (€/mois)",
+    "dist_arret_bus_m": "Distance arrêt de transport (m)",
+    "nb_arrets_bus_400m": "Arrêts de transport à < 400 m",
+    "dist_commerce_alim_m": "Distance commerce alimentaire (m)",
+    "nb_commerces_500m": "Commerces de proximité à < 500 m",
+    "score_commodites_500m": "Indice commodités & mobilité (/20)",
+    "loyer_m2_estime": "Loyer de marché estimé (€/m²/mois)",
+    "loyer_mensuel_estime": "Loyer mensuel estimé (€/mois)",
     "rendement_brut_pct": "Rendement locatif brut estimé (%)",
-    "rendement_net_estime_pct": "Rendement locatif net estimé après travaux (%)",
-    "niveau_travaux_cat": "Catégorie travaux (0=Aucun, 1=Légers 400€, 2=Rénov 750€, 3=Neuf 1200€, 4=Lourde 2000€)",
-    "clip_etat_score": "Note état intérieur OpenCLIP 5 catégories (1=Très dégradé à 5=Neuf)",
-    "clip_score_travaux": "Probabilité visuelle travaux OpenCLIP (0 à 1)",
-    "clip_score_renove": "Probabilité visuelle bien rénové OpenCLIP (0 à 1)",
-    "vis_emb_0": "Embedding visuel photo — composante couleur 0",
-    "vis_emb_1": "Embedding visuel photo — composante couleur 1",
-    "vis_emb_2": "Embedding visuel photo — composante saturation/luminance 2",
-    "iris_code": "Code îlot IRIS INSEE (localisation GPS exacte)",
-    "commune_donnees_limitees": "Commune avec < 15 annonces (alerte fiabilité)",
-    "vis_etat_vlm": "Note état intérieur VLM (1-5)",
-    "iris_code": "Îlot IRIS exact (GPS)",
-    "txt_jardin": "Mot-clé : Jardin",
-    "txt_a_renover": "Mot-clé : À rénover / Travaux",
-    "txt_terrasse": "Mot-clé : Terrasse",
-    "txt_parking": "Mot-clé : Parking / Garage",
-    "txt_balcon": "Mot-clé : Balcon / Loggia",
-    "txt_ascenseur": "Mot-clé : Ascenseur",
-    "txt_cave": "Mot-clé : Cave",
-    "txt_renove": "Mot-clé : Rénové",
-    "txt_vendu_loue": "Mot-clé : Vendu loué",
-    "txt_dernier_etage": "Mot-clé : Dernier étage",
-    "txt_lumineux": "Mot-clé : Lumineux",
-    "txt_calme": "Mot-clé : Calme",
-    "txt_investissement": "Mot-clé : Investissement / Étudiant",
-    "txt_pac": "Mot-clé : Pompe à chaleur / Clim",
-    "txt_piscine": "Mot-clé : Piscine",
-    "txt_immeuble": "Mot-clé : Immeuble de rapport / Lots",
-    "txt_standing": "Mot-clé : Standing / Architecte",
+    "rendement_net_estime_pct": "Rendement net estimé après travaux (%)",
+    "niveau_travaux_cat": "Catégorie de travaux (0 à 4)",
+    "clip_etat_score": "État visuel sur photos (IA)",
+    "clip_score_travaux": "Travaux visibles sur photos (IA)",
+    "clip_score_renove": "Aspect rénové sur photos (IA)",
+    "vis_emb_0": "Signature visuelle photos #1",
+    "vis_emb_1": "Signature visuelle photos #2",
+    "vis_emb_2": "Signature visuelle photos #3",
+    "iris_code": "Îlot statistique INSEE (IRIS)",
+    "commune_donnees_limitees": "Secteur avec peu de références",
+    "txt_jardin": "Présence d'un jardin",
+    "txt_a_renover": "Bien signalé à rénover",
+    "txt_terrasse": "Présence d'une terrasse",
+    "txt_parking": "Parking / garage inclus",
+    "txt_balcon": "Présence d'un balcon",
+    "txt_ascenseur": "Ascenseur dans l'immeuble",
+    "txt_cave": "Cave / cellier",
+    "txt_renove": "Bien rénové / refait à neuf",
+    "txt_vendu_loue": "Vendu actuellement loué",
+    "txt_dernier_etage": "Situé au dernier étage",
+    "txt_lumineux": "Exposition lumineuse",
+    "txt_calme": "Environnement calme",
+    "txt_investissement": "Profil investissement / étudiant",
+    "txt_pac": "Pompe à chaleur / climatisation",
+    "txt_piscine": "Présence d'une piscine",
+    "txt_immeuble": "Immeuble de rapport / multi-lots",
+    "txt_standing": "Prestations haut de gamme / architecte",
+}
+
+DESCRIPTIONS_FEATURES = {
+    "surface_m2": "Surface habitable totale : plus elle est grande, plus le prix total monte, avec un prix au m² généralement dégressif.",
+    "surface_par_piece": "Surface moyenne par pièce : mesure le volume et le confort des espaces de vie.",
+    "surface_relative_marche": "Compare la taille de ce bien à la médiane des biens similaires dans la même ville.",
+    "pm2_voisinage": "Prix médian au m² des vraies ventes notaires (DVF) signées autour du bien dans un rayon de 800 m.",
+    "pm2_dvf_pondere_dist": "Moyenne des ventes notaires proches, pondérée par la proximité géographique.",
+    "pm2_dvf_tranche_surface": "Prix au m² notarial observé spécifiquement pour la même tranche de taille.",
+    "dist_centre_km": "Distance en km jusqu'au centre-ville historique de la ville.",
+    "dist_centre_norm": "Éloignement rapporté au rayon urbain de la ville (comparable d'une ville à l'autre).",
+    "dx_centre_km": "Décalage Est (+) / Ouest (-) en km par rapport au centre-ville.",
+    "dy_centre_km": "Décalage Nord (+) / Sud (-) en km par rapport au centre-ville.",
+    "tranche_surface": "Segment de taille du bien (<20, 20-35, 35-60, 60-90, 90-130, >=130 m²).",
+    "tranche_surface_type": "Croisement entre le segment de surface et le type de bien (Maison/Appartement).",
+    "typologie": "Typologie du bien selon le nombre de pièces et le type (ex. Appartement T2, Maison T4).",
+    "ratio_terrain_bati": "Rapport entre la surface extérieure (jardin/terrasse) et la surface habitable.",
+    "dist_gare_km": "Distance jusqu'à la gare SNCF/TGV principale de la ville.",
+    "dist_campus_km": "Distance jusqu'au pôle universitaire principal (influence la demande studio/T2).",
+    "dist_chu_km": "Distance jusqu'au centre hospitalier principal (bassin d'emploi majeur).",
+    "dist_centre_vie_km": "Distance au pôle de vie urbain le plus proche (centre-ville, gare ou pôle majeur).",
+    "score_centre_vie": "Indice synthétique (0 à 100) combinant centralité, transports et commerces de proximité.",
+    "dist_arret_bus_m": "Distance en mètres jusqu'à l'arrêt de transport en commun le plus proche.",
+    "dist_commerce_alim_m": "Distance jusqu'au commerce alimentaire le plus proche.",
+    "nb_commerces_500m": "Nombre de commerces et services accessibles à moins de 500 m à pied.",
+    "dpe_num": "Classe énergétique (A = très économe à G = passoire thermique) : impacte fortement la valeur.",
+    "etage": "Étage du logement (les étages élevés avec ascenseur sont valorisés ; le RDC peut décoter).",
+    "annee_construction": "Année de construction : reflète l'architecture, l'isolation et les normes techniques.",
+    "revenu_median_secteur": "Revenu médian des ménages du secteur INSEE (IRIS) : indicateur objectif du standing du micro-quartier.",
+    "taux_hlm_secteur": "Proportion de logements sociaux dans le secteur.",
+    "est_en_qpv": "Indique si le bien est situé dans un Quartier Prioritaire de la Politique de la Ville (ANCT).",
+    "dist_qpv_km": "Distance en km au Quartier Prioritaire le plus proche.",
+    "loyer_m2_estime": "Loyer mensuel estimé au m² pour ce secteur (Carte des loyers ANIL / marché local).",
+    "clip_etat_score": "Score d'état intérieur calculé automatiquement par vision IA (OpenCLIP) sur les photos.",
+    "clip_score_travaux": "Indice visuel de travaux détectés sur les photos.",
+    "ville_quartier": "Effet propre du quartier dans sa ville (évite toute confusion entre quartiers homonymes).",
+    "iris_code": "Micro-secteur statistique INSEE (~2 000 habitants), plus fin qu'un nom de quartier d'agence.",
+    "type_bien": "Distingue une maison individuelle d'un appartement en copropriété.",
 }
 
 CHEMIN_IRIS_GEOJSON = os.path.join("csv", "iris_grand_poitiers.geojson")
 ORDRE_DPE = {c: i for i, c in enumerate("ABCDEFG", start=1)}
-CATEGORIELLES = ["quartier", "iris_code", "type_bien"]
+CATEGORIELLES = ["ville", "ville_quartier", "iris_code", "type_bien", "tranche_surface", "tranche_surface_type", "typologie"]
 
 # Colonnes générées uniquement lors de la prédiction/évaluation (ne doivent JAMAIS être dans les tables *_features ni dans X)
 COLONNES_PREDICTION = [
@@ -262,42 +312,94 @@ def reparer_url(row: pd.Series) -> str:
 
 def nettoyer_annonces(df: pd.DataFrame, verbose: bool = True, exclure_atypiques: bool = True) -> pd.DataFrame:
     """
-    Nettoie les annonces :
-    - Garde uniquement les biens de la Vienne (`86xxx`, évite les homonymes type Saint-Benoît 974)
+    Nettoie les annonces multi-villes (12 villes-centres V1) :
+    - Garde uniquement les biens des 12 villes-centres si `code_postal` / `ville` renseigné
     - Supprime les prix/surfaces manquants ou aberrants
-    - Pour l'investissement résidentiel Grand Poitiers (`exclure_atypiques=True`), écarte
-      les biens d'exception hors marché (> 480 000 € ou > 240 m² ou châteaux/manoirs)
+    - Écarte les biens d'exception hors marché (> 750 000 € ou > 300 m² ou < 600 €/m² ou viager/château)
     """
+    from src.ingestion.territoires import est_ville_centre, resoudre_territoire
+
     df = df.copy()
     avant = len(df)
     df = df.dropna(subset=["prix", "surface_m2"])
     df = df[(df["prix"] > 0) & (df["surface_m2"] > 0)].copy()
 
-    if "code_postal" in df.columns:
-        cp_str = df["code_postal"].astype(str).str.strip()
-        df = df[cp_str.str.startswith("86")].copy()
+    if "code_postal" in df.columns or "ville" in df.columns:
+        cps = df["code_postal"].tolist() if "code_postal" in df.columns else [None] * len(df)
+        villes = df["ville"].tolist() if "ville" in df.columns else [None] * len(df)
+        mask_vc = [est_ville_centre(cp, v) for cp, v in zip(cps, villes)]
+        if any(mask_vc):
+            df = df[mask_vc].copy()
 
     pm2 = df["prix"] / df["surface_m2"]
     df = df[pm2.between(300, 12000)].copy()
 
     if exclure_atypiques:
         txt_td = (df["titre"].fillna("") + " " + df["description"].fillna("")).str.lower()
-        est_chateau = txt_td.str.contains(r"\bch[âa]teau\b|\bmanoir\b|\bpropri[ée]t[ée]\s+d'exception\b", regex=True)
+        est_chateau = txt_td.str.contains(
+            r"\bch[âa]teau\b|\bmanoir\b|\bpropri[ée]t[ée]\s+d'exception\b|\bhotel\s+particulier\b|\bh[ôo]tel\s+particulier\b",
+            regex=True,
+        )
         est_viager_encheres = txt_td.str.contains(
             r"\bviager\b|\bbouquet\b|\bnue[-\s]?propri[ée]t[ée]\b|\busufruit\b|\brente\s+viag[èe]re\b|\bench[èe]res\b|\bvente\s+[àa]\s+terme\b",
             regex=True,
         )
+        est_atypique_pro = txt_td.str.contains(
+            r"\bimmeuble\s+de\s+rapport\b|\bmonopropri[ée]t[ée]\b|\blocal\s+commercial\b|\bmurs\s+commerciaux\b|\bfonds\s+de\s+commerce\b|\bterrain\s+(?:nu|constructible|[àa]\s+b[âa]tir)\b|\b(?:parking|box|garage)\s+(?:seul|ferm[ée]\s+seul)\b|\bruine\b|\b[àa]\s+d[ée]molir\b|\bp[ée]niche\b|\bmobile[-\s]?home\b",
+            regex=True,
+        )
         pm2_cur = df["prix"] / df["surface_m2"]
-        df = df[(df["prix"] <= 480_000) & (df["surface_m2"] <= 240) & (~est_chateau) & (~est_viager_encheres) & (pm2_cur >= 950)].copy()
-
-    suppr = avant - len(df)
-    if verbose and suppr:
-        print(f"{suppr} annonces supprimées (hors 86, viager/enchères, < 950 €/m² ou luxe > 480k€ / > 240m²).")
+        df = df[
+            (df["prix"] >= 25_000)
+            & (df["surface_m2"] >= 12)
+            & (df["surface_m2"] <= 200)
+            & (pm2_cur >= 500)
+            & (~est_chateau)
+            & (~est_viager_encheres)
+            & (~est_atypique_pro)
+        ].copy()
 
     if "quartier" in df.columns:
         df["quartier"] = df["quartier"].replace(QUARTIERS_HARMONISES)
     if "type_bien" in df.columns:
         df["type_bien"] = df["type_bien"].replace(TYPES_BIEN_HARMONISES)
+    cps_2 = df["code_postal"].tolist() if "code_postal" in df.columns else [None] * len(df)
+    villes_2 = df["ville"].tolist() if "ville" in df.columns else [None] * len(df)
+    df["code_territoire"] = [resoudre_territoire(cp, v) or "poitiers" for cp, v in zip(cps_2, villes_2)]
+
+    # Filtrage statistique adaptatif par ville (code_territoire, type_bien)
+    if exclure_atypiques and len(df) >= 25:
+        df["_pm2_tmp"] = df["prix"] / df["surface_m2"]
+        keep_mask = pd.Series(True, index=df.index)
+        for terr, grp_t in df.groupby("code_territoire"):
+            for tb, grp in grp_t.groupby("type_bien"):
+                ref = grp if len(grp) >= 25 else grp_t
+                if len(ref) < 20:
+                    continue
+                for col_f, q_low, q_high, k_iqr in [
+                    ("prix", 0.02, 0.98, 2.0),
+                    ("surface_m2", 0.02, 0.98, 2.0),
+                    ("_pm2_tmp", 0.02, 0.98, 2.0),
+                ]:
+                    s = pd.to_numeric(ref[col_f], errors="coerce").dropna()
+                    if len(s) < 20:
+                        continue
+                    q02, q25, q75, q98 = s.quantile([q_low, 0.25, 0.75, q_high]).values
+                    iqr = max(q75 - q25, 1e-6)
+                    lo = max(q02, q25 - k_iqr * iqr)
+                    hi = min(q98, q75 + k_iqr * iqr)
+                    if col_f == "surface_m2":
+                        hi = min(hi, 200.0)
+                    vals = pd.to_numeric(grp[col_f], errors="coerce")
+                    keep_mask.loc[grp.index] &= vals.between(lo, hi)
+        df = df[keep_mask].drop(columns=["_pm2_tmp"]).copy()
+
+    suppr = avant - len(df)
+    if verbose and suppr:
+        print(f"{suppr} annonces supprimées (hors 12 villes-centres, >200m², atypiques ou outliers adaptatifs par ville).")
+    q_col = df["quartier"].fillna("Centre").astype(str).str.strip() if "quartier" in df.columns else pd.Series("Centre", index=df.index)
+    v_col = df["ville"].fillna(df["code_territoire"]).astype(str).str.strip() if "ville" in df.columns else df["code_territoire"]
+    df["ville_quartier"] = v_col + "__" + q_col
     df["url"] = df.apply(reparer_url, axis=1)
     return df
 
@@ -589,53 +691,130 @@ def haversine_km(lat1, lon1, lat2, lon2):
 
 
 def features_geo(df: pd.DataFrame) -> pd.DataFrame:
+    """Calcule les distances aux pôles urbains locaux de la ville du bien (centre, gare, campus, CHU, pôle de vie)."""
+    from src.ingestion.territoires import VILLES_CENTRES, resoudre_territoire, territoire_plus_proche
+
     df = df.copy()
-    df["dist_centre_km"] = haversine_km(df["latitude"], df["longitude"], *CENTRE)
-    df["dist_gare_km"] = haversine_km(df["latitude"], df["longitude"], *GARE)
-    df["dist_campus_km"] = haversine_km(df["latitude"], df["longitude"], *CAMPUS)
-    df["dist_chu_km"] = haversine_km(df["latitude"], df["longitude"], *CHU)
-    df["dist_futuroscope_km"] = haversine_km(df["latitude"], df["longitude"], *FUTUROSCOPE)
+    if len(df) == 0:
+        for col in [
+            "dist_centre_km", "dist_centre_norm", "dist_gare_km", "dist_campus_km",
+            "dist_chu_km", "dist_centre_vie_km",
+            "dx_centre_km", "dy_centre_km", "dx_norm", "dy_norm",
+            "angle_centre_sin", "angle_centre_cos",
+        ]:
+            df[col] = np.nan
+        return df
+
+    lats = pd.to_numeric(df["latitude"], errors="coerce").to_numpy(dtype=float)
+    lons = pd.to_numeric(df["longitude"], errors="coerce").to_numpy(dtype=float)
+    cps = df["code_postal"].tolist() if "code_postal" in df.columns else [None] * len(df)
+    villes = df["ville"].tolist() if "ville" in df.columns else [None] * len(df)
+    terrs = df["code_territoire"].tolist() if "code_territoire" in df.columns else [None] * len(df)
+
+    d_centre, d_norm, d_gare, d_campus, d_chu, d_vie, codes_out = [], [], [], [], [], [], []
+    dx_l, dy_l, dx_n_l, dy_n_l, ang_s_l, ang_c_l = [], [], [], [], [], []
+    for i in range(len(df)):
+        code = terrs[i] if (terrs[i] and str(terrs[i]) in VILLES_CENTRES) else resoudre_territoire(cps[i], villes[i])
+        if not code and np.isfinite(lats[i]) and np.isfinite(lons[i]):
+            code = territoire_plus_proche(lats[i], lons[i], max_km=30.0)
+        cfg = VILLES_CENTRES.get(code or "poitiers", VILLES_CENTRES["poitiers"])
+        codes_out.append(cfg.code_territoire)
+
+        if np.isfinite(lats[i]) and np.isfinite(lons[i]):
+            dc = float(haversine_km(lats[i], lons[i], cfg.centre_lat, cfg.centre_lon))
+            dg = float(haversine_km(lats[i], lons[i], cfg.gare_lat, cfg.gare_lon))
+            du = float(haversine_km(lats[i], lons[i], cfg.campus_lat, cfg.campus_lon))
+            dh = float(haversine_km(lats[i], lons[i], cfg.chu_lat, cfg.chu_lon))
+            rayon = max(cfg.rayon_urbain_km, 1.0)
+            dy_km = (lats[i] - cfg.centre_lat) * 111.32
+            dx_km = (lons[i] - cfg.centre_lon) * 111.32 * float(np.cos(np.radians(cfg.centre_lat)))
+            theta = float(np.arctan2(dy_km, dx_km))
+
+            d_centre.append(round(dc, 3))
+            d_norm.append(round(dc / rayon, 3))
+            d_gare.append(round(dg, 3))
+            d_campus.append(round(du, 3))
+            d_chu.append(round(dh, 3))
+            d_vie.append(round(min(dc, dg, du, dh), 3))
+            dx_l.append(round(dx_km, 3))
+            dy_l.append(round(dy_km, 3))
+            dx_n_l.append(round(dx_km / rayon, 3))
+            dy_n_l.append(round(dy_km / rayon, 3))
+            ang_s_l.append(round(float(np.sin(theta)), 4))
+            ang_c_l.append(round(float(np.cos(theta)), 4))
+        else:
+            d_centre.append(np.nan)
+            d_norm.append(np.nan)
+            d_gare.append(np.nan)
+            d_campus.append(np.nan)
+            d_chu.append(np.nan)
+            d_vie.append(np.nan)
+            dx_l.append(np.nan)
+            dy_l.append(np.nan)
+            dx_n_l.append(np.nan)
+            dy_n_l.append(np.nan)
+            ang_s_l.append(np.nan)
+            ang_c_l.append(np.nan)
+
+    df["code_territoire"] = codes_out
+    df["dist_centre_km"] = d_centre
+    df["dist_centre_norm"] = d_norm
+    df["dist_gare_km"] = d_gare
+    df["dist_campus_km"] = d_campus
+    df["dist_chu_km"] = d_chu
+    df["dist_centre_vie_km"] = d_vie
+    df["dx_centre_km"] = dx_l
+    df["dy_centre_km"] = dy_l
+    df["dx_norm"] = dx_n_l
+    df["dy_norm"] = dy_n_l
+    df["angle_centre_sin"] = ang_s_l
+    df["angle_centre_cos"] = ang_c_l
     return df
 
 
 def features_open_data_grand_poitiers(df: pd.DataFrame) -> pd.DataFrame:
     """
-    Rattache par GPS et code postal/quartier les indicateurs Open Data Grand Poitiers :
-    - QPV (Couronneries, Trois Cités, Bel Air, Beaulieu, Saint-Éloi) : `est_en_qpv`, `dist_qpv_km`
-    - INSEE FiLoSoFi / RPLS / RP : `revenu_median_secteur`, `taux_hlm_secteur`,
-      `part_proprietaires_secteur`, `taux_vacance_secteur`
+    Rattache par territoire & GPS les indicateurs Open Data multi-villes :
+    - QPV : `est_en_qpv`, `dist_qpv_km` (Poitiers + table PostGIS `ref_qpv` quand chargée)
+    - INSEE FiLoSoFi : `revenu_median_secteur`, `taux_hlm_secteur`, `part_proprietaires_secteur`, `taux_vacance_secteur`
+    - Mobilité / Commerces (`ref_poi` ou CSV locaux) + `score_centre_vie` (0-100).
     """
+    from src.ingestion.territoires import VILLES_CENTRES, resoudre_territoire
+
     df = df.copy()
+    if len(df) == 0:
+        return df
 
-    # 1. Distance au QPV le plus proche & appartenance QPV
-    if len(df) > 0:
-        dists_qpv = np.column_stack([
-            haversine_km(df["latitude"], df["longitude"], lat_q, lon_q)
-            for _, lat_q, lon_q, _ in QPV_GRAND_POITIERS
-        ])
-        rayons_qpv = np.array([r_q for _, _, _, r_q in QPV_GRAND_POITIERS])
-        with np.errstate(all="ignore"):
-            df["dist_qpv_km"] = np.round(np.nanmin(dists_qpv, axis=1), 3)
-            en_qpv = np.nanmin(dists_qpv - rayons_qpv, axis=1) <= 0
-        df["est_en_qpv"] = np.where(df["latitude"].notna() & en_qpv, 1, 0)
-    else:
-        df["dist_qpv_km"] = np.nan
-        df["est_en_qpv"] = 0
+    # 1. Distance au QPV le plus proche & appartenance QPV (Poitiers connu + fallback propre)
+    lats = pd.to_numeric(df["latitude"], errors="coerce").to_numpy(dtype=float)
+    lons = pd.to_numeric(df["longitude"], errors="coerce").to_numpy(dtype=float)
+    dists_qpv = np.column_stack([
+        haversine_km(lats, lons, lat_q, lon_q)
+        for _, lat_q, lon_q, _ in QPV_GRAND_POITIERS
+    ])
+    rayons_qpv = np.array([r_q for _, _, _, r_q in QPV_GRAND_POITIERS])
+    with np.errstate(all="ignore"):
+        d_qpv_min = np.nanmin(dists_qpv, axis=1)
+        en_qpv = np.nanmin(dists_qpv - rayons_qpv, axis=1) <= 0
+    # Hors Grand Poitiers (distance > 15 km), ne pas imputer un QPV Poitiers
+    df["dist_qpv_km"] = np.where(np.isfinite(d_qpv_min) & (d_qpv_min <= 15.0), np.round(d_qpv_min, 3), np.nan)
+    df["est_en_qpv"] = np.where(np.isfinite(d_qpv_min) & (d_qpv_min <= 15.0) & en_qpv, 1, 0)
 
-    # 2. Revenus médians, HLM, propriétaires & vacance (INSEE FiLoSoFi / RPLS / RP)
+    # 2. Revenus médians, HLM, propriétaires & vacance (sans fallback silencieux vers Poitiers 86000)
     rev_l, hlm_l, prop_l, vac_l = [], [], [], []
     for _, row in df.iterrows():
         q = str(row.get("quartier") or "")
         cp = str(row.get("code_postal") or "")[:5]
-        if q in STATS_QUARTIERS_POITIERS:
+        terr = row.get("code_territoire") or resoudre_territoire(cp, row.get("ville")) or "poitiers"
+        if terr == "poitiers" and q in STATS_QUARTIERS_POITIERS:
             stats = STATS_QUARTIERS_POITIERS[q]
-        elif cp in STATS_COMMUNES_GRAND_POITIERS:
+        elif terr == "poitiers" and cp in STATS_COMMUNES_GRAND_POITIERS:
             stats = STATS_COMMUNES_GRAND_POITIERS[cp]
         else:
-            stats = STATS_COMMUNES_GRAND_POITIERS["86000"]
+            cfg = VILLES_CENTRES.get(terr, VILLES_CENTRES["poitiers"])
+            stats = (cfg.revenu_median_defaut, 22.0, 40.0, 8.5)
 
-        # Ajustement local si situé dans un QPV sans quartier renseigné
-        if row.get("est_en_qpv", 0) == 1 and q not in STATS_QUARTIERS_POITIERS:
+        if terr == "poitiers" and row.get("est_en_qpv", 0) == 1 and q not in STATS_QUARTIERS_POITIERS:
             stats = (16800, 48.0, 26.0, 10.0)
 
         rev_l.append(stats[0])
@@ -648,9 +827,9 @@ def features_open_data_grand_poitiers(df: pd.DataFrame) -> pd.DataFrame:
     df["part_proprietaires_secteur"] = prop_l
     df["taux_vacance_secteur"] = vac_l
 
-    # 3. Mobilité (arrêts Vitalis / gares) & Commerces de proximité (cache OpenStreetMap Grand Poitiers)
-    lat_arr = pd.to_numeric(df["latitude"], errors="coerce").to_numpy()
-    lon_arr = pd.to_numeric(df["longitude"], errors="coerce").to_numpy()
+    # 3. Mobilité & Commerces (PostgreSQL `ref_poi` si peuplé, sinon CSV Poitiers pour le 86)
+    lat_arr = lats
+    lon_arr = lons
 
     def _calc_poi(csv_path: str, rayon_km: float, filtre_col: str | None = None, filtre_vals: set[str] | None = None):
         if not os.path.exists(csv_path) or len(df) == 0:
@@ -669,8 +848,10 @@ def features_open_data_grand_poitiers(df: pd.DataFrame) -> pd.DataFrame:
             if np.isnan(lat_arr[i]) or np.isnan(lon_arr[i]):
                 continue
             d_km = haversine_km(lat_arr[i], lon_arr[i], plat, plon)
-            dist_min_m[i] = round(float(np.min(d_km) * 1000.0), 0)
-            nb_dans_rayon[i] = int(np.sum(d_km <= rayon_km))
+            d_m_min = float(np.min(d_km) * 1000.0)
+            if d_m_min <= 15000.0:
+                dist_min_m[i] = round(d_m_min, 0)
+                nb_dans_rayon[i] = int(np.sum(d_km <= rayon_km))
         return dist_min_m, nb_dans_rayon
 
     d_bus, nb_bus = _calc_poi(os.path.join("csv", "transports_grand_poitiers.csv"), 0.40)
@@ -687,7 +868,16 @@ def features_open_data_grand_poitiers(df: pd.DataFrame) -> pd.DataFrame:
     df["dist_commerce_alim_m"] = d_alim
     df["nb_commerces_500m"] = nb_comm
     df["score_commodites_500m"] = np.round(np.clip(nb_comm * 1.2 + nb_bus * 0.8, 0, 20), 1)
+
+    d_norm = pd.to_numeric(df.get("dist_centre_norm", pd.Series(0.5, index=df.index)), errors="coerce").fillna(0.5)
+    df["score_centre_vie"] = np.round(
+        np.clip(100.0 * np.exp(-1.1 * d_norm) * 0.7 + df["score_commodites_500m"] * 1.5, 0.0, 100.0),
+        1,
+    )
     return df
+
+
+features_open_data_territoires = features_open_data_grand_poitiers
 
 
 def features_surface_et_structure(df: pd.DataFrame) -> pd.DataFrame:
@@ -707,13 +897,35 @@ def features_surface_et_structure(df: pd.DataFrame) -> pd.DataFrame:
     df["inv_surface"] = np.round(1.0 / surf, 5)
     df["surface_par_piece"] = np.round(surf / pieces.fillna(2.5), 1)
     df["ratio_chambres"] = np.round(chambres.fillna(1.0) / pieces.fillna(2.5), 2)
+
+    # Catégories de taille, typologie (T1/T2/...) et interactions surface × type
+    tb_str = df["type_bien"].fillna("flat").astype(str) if "type_bien" in df.columns else pd.Series("flat", index=df.index)
+    est_maison = (tb_str == "house").astype(float)
+    df["surface_x_maison"] = np.round(surf * est_maison, 1)
+    df["surface_x_appart"] = np.round(surf * (1.0 - est_maison), 1)
+    surf_ext = pd.to_numeric(df.get("surface_ext_m2", pd.Series(0.0, index=df.index)), errors="coerce").fillna(0.0)
+    df["ratio_terrain_bati"] = np.round(np.clip(surf_ext / surf, 0.0, 30.0), 3)
+
+    tranche_s = pd.cut(
+        surf,
+        bins=[0.0, 20.0, 35.0, 60.0, 90.0, 130.0, float("inf")],
+        labels=["<20", "20_35", "35_60", "60_90", "90_130", ">=130"],
+        right=False,
+    ).astype(str)
+    df["tranche_surface"] = tranche_s
+    df["tranche_surface_type"] = tranche_s + "__" + tb_str
+
+    p_int = pieces.round(0).clip(lower=1, upper=5).fillna(2).astype(int)
+    t_lbl = np.where(p_int >= 5, "T5+", "T" + p_int.astype(str))
+    df["typologie"] = tb_str + "__" + pd.Series(t_lbl, index=df.index)
     df["age_bien"] = np.where(np.isfinite(annee), 2026.0 - annee, np.nan)
     df["est_rdc"] = np.where(etage == 0.0, 1, 0)
     asc = pd.to_numeric(df.get("txt_ascenseur", pd.Series(0, index=df.index)), errors="coerce").fillna(0.0).astype(float)
     df["etage_eleve_sans_ascenseur"] = np.where((etage >= 3.0) & (asc == 0.0), 1, 0)
 
-    # Surface relative par rapport au marché du même type de bien
-    med_par_type = df.groupby("type_bien")["surface_m2"].transform("median")
+    # Surface relative par rapport au marché du même type de bien et de la même ville
+    grp_cols = ["ville", "type_bien"] if "ville" in df.columns else ["type_bien"]
+    med_par_type = df.groupby(grp_cols)["surface_m2"].transform("median")
     df["surface_relative_marche"] = np.round(surf / med_par_type.replace(0, np.nan), 3)
 
     # Loi Carrez vs surface utile / au sol
@@ -735,9 +947,9 @@ def features_surface_et_structure(df: pd.DataFrame) -> pd.DataFrame:
     df["prix_m2_carrez"] = np.round(prix_num / pd.to_numeric(df["surface_carrez_m2"], errors="coerce").replace(0, np.nan), 0)
     df["prix_m2_utile"] = np.round(prix_num / pd.to_numeric(df["surface_utile_m2"], errors="coerce").clip(lower=9.0), 0)
 
-    # Flag communes peu représentées (Saint-Benoît, Biard, Vouneuil-sous-Biard, etc.)
+    # Flag communes peu représentées
     if "ville" in df.columns:
-        ville_clean = df["ville"].fillna("Poitiers").astype(str).str.strip()
+        ville_clean = df["ville"].fillna("inconnu").astype(str).str.strip()
         counts_v = ville_clean.map(ville_clean.value_counts())
         df["commune_nb_annonces"] = counts_v.fillna(0).astype(int)
         df["commune_donnees_limitees"] = np.where(df["commune_nb_annonces"] < 15, 1, 0)
@@ -888,26 +1100,33 @@ def features_marche_historique(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def telecharger_ou_charger_dvf(dvf_path: str = CHEMIN_DVF_CSV, verbose: bool = True) -> pd.DataFrame | None:
+CHEMIN_DVF_MULTI_CSV = os.path.join("csv", "dvf_multi_villes.csv")
+
+
+def telecharger_ou_charger_dvf(dvf_path: str = CHEMIN_DVF_MULTI_CSV, verbose: bool = True) -> pd.DataFrame | None:
     """
-    Charge le fichier local des ventes notariées DVF de Grand Poitiers (12 communes),
-    ou le télécharge automatiquement depuis data.gouv.fr (Etalab geo-dvf 2023-2025).
+    Charge les ventes notariées DVF des 12 villes-centres (Etalab geo-dvf 2023-2025),
+    avec repli local sur `csv/dvf_grand_poitiers.csv` si hors-ligne.
     """
+    from src.ingestion.territoires import VILLES_CENTRES
+
     os.makedirs(os.path.dirname(dvf_path) or "csv", exist_ok=True)
-    if os.path.exists(dvf_path) and os.path.getsize(dvf_path) > 1000:
+    if os.path.exists(dvf_path) and os.path.getsize(dvf_path) > 5000:
         try:
             return pd.read_csv(dvf_path, low_memory=False)
         except Exception:
             pass
 
     dfs = []
-    for code_insee in CODES_INSEE_GRAND_POITIERS:
+    for code, cfg in VILLES_CENTRES.items():
+        dept = cfg.code_insee[:2]
         for annee in ("2025", "2024", "2023"):
-            u = f"https://files.data.gouv.fr/geo-dvf/latest/csv/{annee}/communes/86/{code_insee}.csv"
+            u = f"https://files.data.gouv.fr/geo-dvf/latest/csv/{annee}/communes/{dept}/{cfg.code_insee}.csv"
             try:
                 req = urllib.request.Request(u, headers={"User-Agent": "Mozilla/5.0"})
-                with urllib.request.urlopen(req, timeout=6) as resp:
+                with urllib.request.urlopen(req, timeout=8) as resp:
                     sub = pd.read_csv(resp, low_memory=False)
+                    sub["code_territoire"] = code
                     dfs.append(sub)
             except Exception:
                 continue
@@ -916,26 +1135,26 @@ def telecharger_ou_charger_dvf(dvf_path: str = CHEMIN_DVF_CSV, verbose: bool = T
         dvf_all = pd.concat(dfs, ignore_index=True).drop_duplicates()
         dvf_all.to_csv(dvf_path, index=False)
         if verbose:
-            print(f"Fichier DVF Grand Poitiers téléchargé ({len(dvf_all)} lignes) -> {dvf_path}")
+            print(f"Fichier DVF 12 villes-centres téléchargé ({len(dvf_all)} lignes) -> {dvf_path}")
         return dvf_all
 
-    # Repli local si hors-ligne sur l'ancien fichier Poitiers
-    if os.path.exists(CHEMIN_DVF_POITIERS_LEGACY):
-        return pd.read_csv(CHEMIN_DVF_POITIERS_LEGACY, low_memory=False)
+    for fallback in (CHEMIN_DVF_CSV, CHEMIN_DVF_POITIERS_LEGACY):
+        if os.path.exists(fallback):
+            return pd.read_csv(fallback, low_memory=False)
     return None
 
 
 def nettoyer_dvf(dvf: pd.DataFrame) -> pd.DataFrame:
-    """Filtre les ventes notariées d'appartements et maisons sur Grand Poitiers."""
+    """Filtre les ventes notariées d'appartements et maisons (bornes multi-villes élargies)."""
     dvf = dvf[
         (dvf["nature_mutation"] == "Vente")
         & (dvf["type_local"].isin(["Appartement", "Maison"]))
     ].copy()
     dvf = dvf[dvf.groupby("id_mutation")["id_mutation"].transform("size") <= 2]
     dvf = dvf.dropna(subset=["valeur_fonciere", "surface_reelle_bati", "latitude", "longitude"])
-    dvf = dvf[(dvf["surface_reelle_bati"] >= 14) & (dvf["surface_reelle_bati"] <= 400)]
+    dvf = dvf[(dvf["surface_reelle_bati"] >= 12) & (dvf["surface_reelle_bati"] <= 400)]
     dvf["pm2"] = dvf["valeur_fonciere"] / dvf["surface_reelle_bati"]
-    dvf = dvf[dvf["pm2"].between(700, 6500)].copy()
+    dvf = dvf[dvf["pm2"].between(500, 7500)].copy()
     if "date_mutation" in dvf.columns:
         dvf["annee_mut"] = pd.to_datetime(dvf["date_mutation"], errors="coerce").dt.year
     else:
@@ -1210,11 +1429,17 @@ def construire_X_y(df: pd.DataFrame):
             df[c] = df[c].fillna("inconnu").astype(str)
 
     numeriques = [
-        # Structure & Surface (nettoyée des variables de bruit)
-        "surface_m2", "pieces", "surface_par_piece", "surface_relative_marche",
+        # Structure & Surface (incluant courbure non-linéaire et interactions type)
+        "surface_m2", "log_surface", "sqrt_surface", "inv_surface",
+        "surface_x_maison", "surface_x_appart", "ratio_terrain_bati",
+        "pieces", "surface_par_piece", "surface_relative_marche",
         "est_mention_carrez", "etage", "annee_construction", "dpe_num",
-        # Localisation, Mobilité, Commerces & Open Data GPS
-        "latitude", "dist_centre_km", "dist_gare_km", "dist_campus_km",
+        # Localisation relative aux pôles urbains locaux, repère centré (dx/dy/angle) & Open Data
+        "dist_centre_km", "dist_centre_norm", "dist_gare_km", "dist_campus_km",
+        "dist_chu_km", "dist_centre_vie_km", "score_centre_vie",
+        "dx_centre_km", "dy_centre_km", "dx_norm", "dy_norm",
+        "angle_centre_sin", "angle_centre_cos",
+        "revenu_median_secteur", "taux_hlm_secteur", "est_en_qpv", "dist_qpv_km",
         "dist_arret_bus_m", "dist_commerce_alim_m", "nb_commerces_500m",
         # Texte & LLM
         "txt_longueur", "surface_ext_m2", "charges_annuelles",
@@ -1231,6 +1456,10 @@ def construire_X_y(df: pd.DataFrame):
         "clip_etat_score", "clip_score_travaux",
         "vis_emb_0", "vis_emb_1", "vis_emb_2",
     ]
+    if "ville_quartier" not in df.columns:
+        v_s = df["ville"].fillna("inconnu").astype(str).str.strip() if "ville" in df.columns else pd.Series("inconnu", index=df.index)
+        q_s = df["quartier"].fillna("inconnu").astype(str).str.strip() if "quartier" in df.columns else pd.Series("inconnu", index=df.index)
+        df["ville_quartier"] = v_s + "__" + q_s
 
     numeriques = list(dict.fromkeys(
         c for c in numeriques

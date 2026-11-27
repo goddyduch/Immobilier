@@ -91,7 +91,7 @@ class ModelStore:
         except Exception:
             shap_explainer = None
 
-        df_dvf_raw = fe.telecharger_ou_charger_dvf(fe.CHEMIN_DVF_CSV, verbose=False)
+        df_dvf_raw = fe.telecharger_ou_charger_dvf(fe.CHEMIN_DVF_MULTI_CSV, verbose=False)
         df_dvf_comp = AVMComparable._preparer_dvf_comp(df_dvf_raw)
         df_hist = DB.lire_table_ou_csv(DB.TABLE_HIST_FEAT, DB.CSV_HIST_FEAT)
         df_marche_comp = AVMComparable._preparer_marche_comp(df_hist)

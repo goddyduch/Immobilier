@@ -63,8 +63,33 @@ def estimate_single(req: EstimateRequest, snap: ModelSnapshot) -> EstimateRespon
     comp_sim = 0.0
     comparables: list[ComparableItem] = []
     if req.latitude is not None and req.longitude is not None:
+        # Pré-filtrage spatial ultra-rapide (< 2 ms) pour ne passer que ~60 voisins à l'AVM
+        df_dvf_sub = snap.df_dvf_raw
+        if req.type_bien in snap.dvf_trees_by_type:
+            tree, sub_tree_df, _ = snap.dvf_trees_by_type[req.type_bien]
+            k_q = min(60, len(sub_tree_df))
+            if k_q > 0:
+                _, idxs = tree.query(np.radians([[float(req.latitude), float(req.longitude)]]), k=k_q)
+                df_dvf_sub = sub_tree_df.iloc[idxs[0]]
+        elif snap.df_dvf_raw is not None and not snap.df_dvf_raw.empty:
+            lat_s = pd.to_numeric(snap.df_dvf_raw.get("latitude"), errors="coerce")
+            lon_s = pd.to_numeric(snap.df_dvf_raw.get("longitude"), errors="coerce")
+            df_dvf_sub = snap.df_dvf_raw[
+                (lat_s - float(req.latitude)).abs().le(0.03)
+                & (lon_s - float(req.longitude)).abs().le(0.04)
+            ]
+
+        df_marche_sub = snap.df_marche_comp
+        if df_marche_sub is not None and not df_marche_sub.empty:
+            lat_m = pd.to_numeric(df_marche_sub.get("latitude"), errors="coerce")
+            lon_m = pd.to_numeric(df_marche_sub.get("longitude"), errors="coerce")
+            df_marche_sub = df_marche_sub[
+                (lat_m - float(req.latitude)).abs().le(0.03)
+                & (lon_m - float(req.longitude)).abs().le(0.04)
+            ]
+
         df_avm = AVMComparable.calculer_avm_comparables(
-            df_feat, df_marche=snap.df_marche_comp, df_dvf=snap.df_dvf_raw, top_k=5
+            df_feat, df_marche=df_marche_sub, df_dvf=df_dvf_sub, top_k=8
         )
         v_avm = df_avm["avm_comp_blended_euro"].iloc[0]
         if pd.notna(v_avm) and float(v_avm) > 0:
@@ -73,11 +98,24 @@ def estimate_single(req: EstimateRequest, snap: ModelSnapshot) -> EstimateRespon
         comp_sim = float(df_avm["avm_comp_score_moyen"].iloc[0] or 0.0)
         try:
             raw_comps = json.loads(str(df_avm["avm_comparables_json"].iloc[0] or "[]"))
-            comparables = [ComparableItem(**c) for c in raw_comps]
+            comparables = [ComparableItem(**c) for c in raw_comps[:5]]
         except Exception:
             comparables = []
 
     prix_hybride = round(0.75 * prix_ml + 0.25 * avm_euro, 0) if avm_euro else prix_ml
+
+    # Resserrement de la fourchette autour de prix_hybride (~14-27 % au lieu de 30-70 %)
+    max_half_pct = 0.11 if comp_nb >= 4 else 0.135
+    if snap.modele_q10 is not None and snap.modele_q90 is not None:
+        raw_q10 = float(np.round(snap.modele_q10.predict(X)[0], 0))
+        raw_q90 = float(np.round(snap.modele_q90.predict(X)[0], 0))
+        raw_half = max(0.06 * prix_hybride, (raw_q90 - raw_q10) / 2.0)
+        half = min(raw_half, max_half_pct * prix_hybride)
+    else:
+        half = 0.11 * prix_hybride
+    q10 = round(prix_hybride - half, 0)
+    q90 = round(prix_hybride + half, 0)
+    larg_pct = round((q90 - q10) / max(prix_hybride, 1.0) * 100.0, 1)
 
     # Score de confiance (0-100) aligné sur Prediction.py
     larg_rel = (q90 - q10) / max(prix_ml, 1.0)
@@ -122,7 +160,7 @@ def estimate_single(req: EstimateRequest, snap: ModelSnapshot) -> EstimateRespon
 
     verdict = determiner_verdict(ecart_brut, score_confiance, larg_pct)
 
-    # SHAP
+    # SHAP (impact en % du prix + euros + plus de facteurs + descriptions métier)
     shap_facteurs: list[ShapFactor] = []
     if snap.shap_explainer is not None:
         try:
@@ -131,20 +169,32 @@ def estimate_single(req: EstimateRequest, snap: ModelSnapshot) -> EstimateRespon
             X_trans = prepa.transform(X)
             feat_names = [n.split("__", 1)[-1] for n in prepa.get_feature_names_out()]
             sv = snap.shap_explainer.shap_values(X_trans)[0]
+            impacts_pct = (np.exp(sv) - 1.0) * 100.0
             impacts = prix_ml * (np.exp(sv) - 1.0)
             paires = [
                 ShapFactor(
                     feature=feat_names[j],
                     label=fe.LABELS_FEATURES.get(feat_names[j], feat_names[j]),
                     impact_euro=round(float(impacts[j]), 0),
+                    impact_pct=round(float(impacts_pct[j]), 1),
+                    description=fe.DESCRIPTIONS_FEATURES.get(feat_names[j], ""),
                 )
                 for j in range(len(feat_names))
-                if abs(impacts[j]) >= 250.0
+                if abs(impacts_pct[j]) >= 0.2 or abs(impacts[j]) >= 100.0
             ]
-            paires.sort(key=lambda x: abs(x.impact_euro), reverse=True)
-            shap_facteurs = paires[:6]
+            paires.sort(key=lambda x: abs(x.impact_pct), reverse=True)
+            shap_facteurs = paires[:35]
         except Exception:
             shap_facteurs = []
+
+    from src.ingestion.territoires import est_ville_centre, lister_noms_villes
+    ville_couverte = est_ville_centre(req.code_postal, req.ville)
+    avertissement_couv = None
+    if not ville_couverte and (req.ville or req.code_postal):
+        avertissement_couv = (
+            f"Hors périmètre V1 : Justeprix couvre actuellement les 12 villes-centres uniquement "
+            f"({', '.join(lister_noms_villes())}). Estimation donnée à titre indicatif."
+        )
 
     latence_ms = round((time.perf_counter() - t0) * 1000.0, 1)
     return EstimateResponse(
@@ -167,6 +217,8 @@ def estimate_single(req: EstimateRequest, snap: ModelSnapshot) -> EstimateRespon
         loyer_bas=loyer_bas,
         loyer_haut=loyer_haut,
         rendement_brut_pct=rendement_brut,
+        ville_couverte=ville_couverte,
+        avertissement_couverture=avertissement_couv,
         shap_facteurs=shap_facteurs,
         comparables=comparables,
         latence_ms=latence_ms,

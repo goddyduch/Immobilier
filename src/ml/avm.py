@@ -170,18 +170,18 @@ def calculer_avm_comparables(
             if not sub_dvf.empty:
                 dists = _haversine_vec(lat, lon, sub_dvf["latitude"].values, sub_dvf["longitude"].values)
                 ratio_s = np.abs(sub_dvf["surface_m2"].values - surf) / surf
-                mask = (dists <= 0.8) & (ratio_s <= 0.20)
+                mask = (dists <= 1.2) & (ratio_s <= 0.15)
                 if mask.sum() < 4:
-                    mask = (dists <= 1.5) & (ratio_s <= 0.35)
+                    mask = (dists <= 2.2) & (ratio_s <= 0.20)
                 if mask.sum() < 4:
-                    mask = (dists <= 3.0) & (ratio_s <= 0.50)
+                    mask = (dists <= 3.5) & (ratio_s <= 0.30)
                 if mask.sum() > 0:
                     cand = sub_dvf[mask].copy()
                     cand["dist_km"] = dists[mask]
                     cand["ratio_s"] = ratio_s[mask]
                     dist_comp = (
-                        0.45 * np.minimum(1.0, cand["dist_km"] / 1.5)
-                        + 0.35 * np.minimum(1.0, cand["ratio_s"] / 0.35)
+                        0.55 * np.minimum(1.0, cand["ratio_s"] / 0.20)
+                        + 0.25 * np.minimum(1.0, cand["dist_km"] / 2.2)
                         + 0.20 * np.minimum(1.0, cand["age_mois"] / 24.0)
                     )
                     cand["sim_pct"] = np.round(100.0 * np.exp(-1.5 * dist_comp), 1)
@@ -189,13 +189,15 @@ def calculer_avm_comparables(
                     cand["poids"] = np.exp(-2.5 * dist_comp) * np.exp(-cand["age_mois"] / 18.0)
                     top_d = cand.sort_values("sim_pct", ascending=False).head(top_k)
                     nb_dvf = len(top_d)
-                    # Correction dégressivité de surface + recalage DVF net signé -> équivalent affiché FAI (+8%)
+                    # Correction dégressivité de surface + recalage DVF net signé -> équivalent affiché FAI
                     pm2_corr = top_d["pm2"].values * np.power(np.clip(top_d["surface_m2"].values / surf, 0.5, 1.8), ELASTICITE_SURFACE_PM2)
-                    pm2_d = np.average(pm2_corr, weights=top_d["poids"].values)
+                    poids_d = top_d["poids"].values
+                    poids_d_sum = float(np.sum(poids_d)) or 1.0
+                    pm2_d = np.average(pm2_corr, weights=poids_d)
                     val_dvf = round(float(pm2_d * surf * COEF_DVF_VERS_AFFICHE), 0)
                     val_dvf_net = round(max(10000.0, val_dvf - COEF_DECODAGE_TRAVAUX * trav_b), 0)
-                    for _, c_row in top_d.head(3).iterrows():
-                        commune = str(c_row.get("nom_commune", "Poitiers") or "Poitiers")
+                    for idx_c, (_, c_row) in enumerate(top_d.head(5).iterrows()):
+                        commune = str(c_row.get("nom_commune") or row.get("ville") or "Secteur local")
                         meilleurs_fiches.append({
                             "source": "DVF Notaire",
                             "titre": f"Vente {commune} ({c_row['date_label']})",
@@ -203,6 +205,16 @@ def calculer_avm_comparables(
                             "surface_m2": round(float(c_row["surface_m2"]), 1),
                             "prix": round(float(c_row["prix"]), 0),
                             "pm2": round(float(c_row["pm2"]), 0),
+                            "pm2_ajuste": round(float(pm2_corr[idx_c] * COEF_DVF_VERS_AFFICHE), 0),
+                            "poids_pct": round(float(poids_d[idx_c] / poids_d_sum * 100.0), 1),
+                            "date_transaction": str(c_row.get("date_label", "")),
+                            "age_mois": round(float(c_row.get("age_mois", 0.0)), 1),
+                            "quartier": str(c_row.get("quartier") or commune),
+                            "pieces": int(c_row["pieces"]) if pd.notna(c_row.get("pieces")) else None,
+                            "dpe": None,
+                            "a_exterieur": False,
+                            "a_parking": False,
+                            "a_ascenseur": False,
                             "travaux_euro": 0,
                             "similarite_pct": float(c_row["sim_pct"]),
                             "url": "",
@@ -220,24 +232,24 @@ def calculer_avm_comparables(
             if not sub_m.empty:
                 dists = _haversine_vec(lat, lon, sub_m["latitude"].values, sub_m["longitude"].values)
                 ratio_s = np.abs(sub_m["surface_m2"].values - surf) / surf
-                mask = (dists <= 0.8) & (ratio_s <= 0.20)
+                mask = (dists <= 1.2) & (ratio_s <= 0.15)
                 if mask.sum() < 4:
-                    mask = (dists <= 1.5) & (ratio_s <= 0.35)
+                    mask = (dists <= 2.2) & (ratio_s <= 0.20)
                 if mask.sum() < 4:
-                    mask = (dists <= 3.0) & (ratio_s <= 0.50)
+                    mask = (dists <= 3.5) & (ratio_s <= 0.30)
                 if mask.sum() > 0:
                     cand = sub_m[mask].copy()
                     cand["dist_km"] = dists[mask]
                     cand["ratio_s"] = ratio_s[mask]
-                    nb_marche_600m = int((cand["dist_km"] <= 0.6).sum())
+                    nb_marche_600m = int((cand["dist_km"] <= 0.8).sum())
                     if not pd.isna(dpe_b):
                         dpe_gap = np.abs(cand["dpe_num"].fillna(dpe_b).values - dpe_b) / 6.0
                     else:
                         dpe_gap = np.zeros(len(cand))
                     trav_gap = np.minimum(1.0, np.abs(cand["travaux_m2"].values - trav_m2_b) / 600.0)
                     dist_comp = (
-                        0.40 * np.minimum(1.0, cand["dist_km"] / 1.5)
-                        + 0.30 * np.minimum(1.0, cand["ratio_s"] / 0.35)
+                        0.48 * np.minimum(1.0, cand["ratio_s"] / 0.20)
+                        + 0.22 * np.minimum(1.0, cand["dist_km"] / 2.2)
                         + 0.15 * dpe_gap
                         + 0.15 * trav_gap
                     )
@@ -263,9 +275,11 @@ def calculer_avm_comparables(
                     prix_eq = np.maximum(10000.0, top_m["prix_renov_eq"].values * coef_ext * coef_asc * coef_dpe + delta_parking)
                     pm2_eq = prix_eq / top_m["surface_m2"].values
                     pm2_corr_m = pm2_eq * np.power(np.clip(top_m["surface_m2"].values / surf, 0.5, 1.8), ELASTICITE_SURFACE_PM2)
-                    pm2_renov_eq = np.average(pm2_corr_m, weights=top_m["poids"].values)
+                    poids_m = top_m["poids"].values
+                    poids_m_sum = float(np.sum(poids_m)) or 1.0
+                    pm2_renov_eq = np.average(pm2_corr_m, weights=poids_m)
                     val_marche = round(max(10000.0, float(pm2_renov_eq * surf) - COEF_DECODAGE_TRAVAUX * trav_b), 0)
-                    for _, c_row in top_m.head(3).iterrows():
+                    for idx_m, (_, c_row) in enumerate(top_m.head(5).iterrows()):
                         meilleurs_fiches.append({
                             "source": f"Annonce ({c_row.get('source', 'marche')})",
                             "titre": str(c_row.get("titre", "") or f"Bien {c_row['surface_m2']:.0f}m²")[:70],
@@ -273,12 +287,22 @@ def calculer_avm_comparables(
                             "surface_m2": round(float(c_row["surface_m2"]), 1),
                             "prix": round(float(c_row["prix"]), 0),
                             "pm2": round(float(c_row["pm2"]), 0),
+                            "pm2_ajuste": round(float(pm2_corr_m[idx_m]), 0),
+                            "poids_pct": round(float(poids_m[idx_m] / poids_m_sum * 100.0), 1),
+                            "date_transaction": "En ligne",
+                            "age_mois": 0.0,
+                            "quartier": str(c_row.get("quartier") or ""),
+                            "pieces": int(c_row["pieces"]) if pd.notna(c_row.get("pieces")) else None,
+                            "dpe": str(c_row.get("dpe") or "") if pd.notna(c_row.get("dpe")) and str(c_row.get("dpe")) != "inconnu" else None,
+                            "a_exterieur": bool(float(c_row.get("comp_exterieur", 0) or 0) > 0),
+                            "a_parking": bool(float(c_row.get("comp_parking", 0) or 0) > 0),
+                            "a_ascenseur": bool(float(c_row.get("comp_ascenseur", 0) or 0) > 0),
                             "travaux_euro": int(round(float(c_row["travaux_euro"]), 0)),
                             "similarite_pct": float(c_row["sim_pct"]),
                             "url": str(c_row.get("url", "") or ""),
                         })
 
-        meilleurs_fiches = sorted(meilleurs_fiches, key=lambda x: x["similarite_pct"], reverse=True)[:top_k]
+        meilleurs_fiches = sorted(meilleurs_fiches, key=lambda x: x["similarite_pct"], reverse=True)[:5]
         out_dvf[idx_pos] = val_dvf
         out_dvf_net[idx_pos] = val_dvf_net
         out_marche[idx_pos] = val_marche

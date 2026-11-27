@@ -37,4 +37,5 @@ export const api = {
   simulateNegotiation: (payload: any) =>
     request<any>("/v1/dvf-negotiation", { method: "POST", body: JSON.stringify(payload) }),
   getMonitoringOverview: () => request<any>("/v1/monitoring/overview"),
+  getEvaluation: () => request<any>("/v1/evaluation"),
 };

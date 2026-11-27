@@ -126,8 +126,13 @@ def _charger_df_predictions() -> pd.DataFrame:
     df = DB.lire_table_ou_csv(DB.TABLE_PREDICTIONS, DB.CSV_PREDICTIONS)
     if df.empty:
         return df
-    df["tranche_m2"] = pd.to_numeric(df["surface_m2"], errors="coerce").fillna(0).apply(_tranche_label)
-    return df
+    if "est_ville_centre" in df.columns:
+        vc = df[df["est_ville_centre"] == True]  # noqa: E712
+        if not vc.empty:
+            df = vc
+    return df.assign(
+        tranche_m2=pd.to_numeric(df["surface_m2"], errors="coerce").fillna(0).apply(_tranche_label)
+    )
 
 
 def lister_opportunites(
@@ -143,16 +148,20 @@ def lister_opportunites(
     offset: int = 0,
 ) -> OpportunitiesResponse:
     df = _charger_df_predictions()
+    fraicheur_villes = DB.get_etat_scraping()
     if df.empty:
         return OpportunitiesResponse(
             kpis=OpportunitiesKpis(total_biens=0, nb_opportunites_fortes=0, nb_sous_evalues=0),
             facets=OpportunitiesFacets(villes=[], quartiers=[], tranches_m2=[t[0] for t in TRANCHES_M2]),
             total_filtered=0,
             items=[],
+            fraicheur_villes=fraicheur_villes,
         )
 
     villes_dispo = sorted([str(v) for v in df["ville"].dropna().unique() if str(v).strip()]) if "ville" in df else []
-    quartiers_dispo = sorted([str(q) for q in df.get("quartier_clean", df.get("quartier", pd.Series())).dropna().unique() if str(q).strip()])
+    q_col_fac = "quartier_clean" if "quartier_clean" in df.columns else "quartier"
+    df_fac = df[df["ville"].astype(str) == ville] if (ville and ville != "Toutes" and "ville" in df.columns) else df
+    quartiers_dispo = sorted([str(q) for q in df_fac.get(q_col_fac, pd.Series()).dropna().unique() if str(q).strip()])
 
     sub = df.copy()
     if ville and ville != "Toutes":
@@ -199,6 +208,7 @@ def lister_opportunites(
         facets=OpportunitiesFacets(villes=villes_dispo, quartiers=quartiers_dispo, tranches_m2=[t[0] for t in TRANCHES_M2]),
         total_filtered=len(items_all),
         items=page,
+        fraicheur_villes=fraicheur_villes,
     )
 
 
@@ -228,8 +238,24 @@ def detail_opportunite(ad_id: str) -> OpportunityDetail:
 
     shap_facteurs: list[ShapFactor] = []
     try:
+        from src.ml import features as fe
         sd = json.loads(str(r.get("shap_top_facteurs_json", "{}") or "{}"))
-        shap_facteurs = [ShapFactor(**f) for f in sd.get("facteurs", [])]
+        prix_base = max(base.prix_estime_ml, 1.0)
+        for f in sd.get("facteurs", []):
+            feat = str(f.get("feature", ""))
+            imp_e = float(f.get("impact_euro", 0.0) or 0.0)
+            imp_p = f.get("impact_pct")
+            if imp_p is None or (float(imp_p) == 0.0 and abs(imp_e) > 0):
+                imp_p = round(imp_e / prix_base * 100.0, 1)
+            shap_facteurs.append(
+                ShapFactor(
+                    feature=feat,
+                    label=fe.LABELS_FEATURES.get(feat, str(f.get("label", feat))),
+                    impact_euro=round(imp_e, 0),
+                    impact_pct=float(imp_p),
+                    description=str(f.get("description") or fe.DESCRIPTIONS_FEATURES.get(feat, "")),
+                )
+            )
     except Exception:
         shap_facteurs = []
 

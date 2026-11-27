@@ -196,14 +196,15 @@ def _extraire_adresse_explicite(texte: str) -> str | None:
     return None
 
 
-def geocoder_adresse_etat(requete: str, code_postal: str = "86000") -> dict | None:
+def geocoder_adresse_etat(requete: str, code_postal: str = "") -> dict | None:
     """
     Interroge l'API publique gratuite Base Adresse Nationale (api-adresse.data.gouv.fr),
-    avec repli sur l'API Géoplateforme (data.geopf.fr).
+    avec repli sur l'API Géoplateforme (data.geopf.fr), sur toute la France métropolitaine.
     """
-    cp = str(code_postal or "86000")[:5]
-    if not cp.startswith("86"):
-        cp = "86000"
+    cp = str(code_postal or "").strip()[:5]
+    params_base = {"q": requete, "limit": 1}
+    if cp and cp.isdigit() and len(cp) == 5:
+        params_base["postcode"] = cp
 
     endpoints = [
         ("ban", "https://api-adresse.data.gouv.fr/search/"),
@@ -213,7 +214,7 @@ def geocoder_adresse_etat(requete: str, code_postal: str = "86000") -> dict | No
         try:
             r = requests.get(
                 url,
-                params={"q": requete, "postcode": cp, "limit": 1},
+                params=params_base,
                 timeout=6,
             )
             if r.status_code != 200:
@@ -228,7 +229,7 @@ def geocoder_adresse_etat(requete: str, code_postal: str = "86000") -> dict | No
             ftype = str(props.get("type", "")).lower()
             if len(coords) == 2 and score >= 0.42:
                 lon, lat = float(coords[0]), float(coords[1])
-                if 46.2 <= lat <= 47.0 and -0.2 <= lon <= 1.1:
+                if 41.0 <= lat <= 51.5 and -5.5 <= lon <= 10.0:
                     return {
                         "latitude": round(lat, 6),
                         "longitude": round(lon, 6),

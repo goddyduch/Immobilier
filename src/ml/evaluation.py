@@ -64,9 +64,40 @@ def importer_table_historique() -> pd.DataFrame:
     return df_hist
 
 
-def calculer_metriques_cv(y_true: np.ndarray, y_pred: np.ndarray, surface: np.ndarray, prefix: str = "") -> dict:
+def _calculer_chi2_adequation(y_true: np.ndarray, y_pred: np.ndarray) -> tuple[float, float]:
+    """Test du chi-deux d'adéquation entre distribution observée et prédite par tranches de prix."""
+    if len(y_true) < 15:
+        return 0.0, 1.0
+    try:
+        from scipy.stats import chisquare
+        n_bins = min(8, max(3, len(y_true) // 15))
+        bins = np.unique(np.quantile(y_true, np.linspace(0.0, 1.0, n_bins + 1)))
+        if len(bins) < 3:
+            return 0.0, 1.0
+        bins[0] = -np.inf
+        bins[-1] = np.inf
+        obs, _ = np.histogram(y_true, bins=bins)
+        exp, _ = np.histogram(y_pred, bins=bins)
+        exp = np.where(exp == 0, 1e-6, exp)
+        exp = exp * (obs.sum() / exp.sum())
+        stat, pval = chisquare(f_obs=obs, f_exp=exp)
+        return round(float(stat), 2), round(float(pval), 4)
+    except Exception:
+        return 0.0, 1.0
+
+
+def calculer_metriques_cv(
+    y_true: np.ndarray,
+    y_pred: np.ndarray,
+    surface: np.ndarray,
+    prefix: str = "",
+    q10: np.ndarray | None = None,
+    q90: np.ndarray | None = None,
+) -> dict:
+    if len(y_true) == 0:
+        return {}
     err_abs = np.abs(y_true - y_pred)
-    err_pct = err_abs / np.maximum(y_pred, 1.0) * 100.0
+    err_pct = err_abs / np.maximum(y_true, 1.0) * 100.0
     mae = float(np.mean(err_abs))
     med_ae = float(np.median(err_abs))
     rmse = float(np.sqrt(np.mean((y_true - y_pred) ** 2)))
@@ -77,13 +108,21 @@ def calculer_metriques_cv(y_true: np.ndarray, y_pred: np.ndarray, surface: np.nd
     ss_tot = float(np.sum((y_true - np.mean(y_true)) ** 2))
     r2 = float(1.0 - ss_res / ss_tot) if ss_tot > 0 else 0.0
 
-    pm2_med = float(np.median(y_true / surface))
+    pm2_med = float(np.median(y_true / np.maximum(surface, 1.0)))
     mae_naif = float(np.mean(np.abs(y_true - pm2_med * surface)))
     gain_naif = float((mae_naif - mae) / mae_naif * 100.0) if mae_naif > 0 else 0.0
+    chi2_stat, chi2_pval = _calculer_chi2_adequation(y_true, y_pred)
+
+    couv_pct = None
+    if q10 is not None and q90 is not None and len(q10) == len(y_true):
+        couv_pct = round(float(np.mean((y_true >= q10) & (y_true <= q90)) * 100.0), 1)
 
     p = f"{prefix}_" if prefix else ""
-    return {
+    out = {
+        f"{p}nb_biens": int(len(y_true)),
         f"{p}r2": round(r2, 4),
+        f"{p}chi2_stat": chi2_stat,
+        f"{p}chi2_pvalue": chi2_pval,
         f"{p}mae": round(mae, 0),
         f"{p}med_ae": round(med_ae, 0),
         f"{p}rmse": round(rmse, 0),
@@ -94,6 +133,9 @@ def calculer_metriques_cv(y_true: np.ndarray, y_pred: np.ndarray, surface: np.nd
         f"{p}within_20pct": round(float(np.mean(err_pct <= 20.0) * 100), 1),
         f"{p}gain_vs_naif_pct": round(gain_naif, 1),
     }
+    if couv_pct is not None:
+        out[f"{p}couverture_q10_q90_pct"] = couv_pct
+    return out
 
 
 def _construire_histgb_pour_cols(cat_cols: list[str]):
@@ -365,6 +407,166 @@ def generer_rapport_html(res: dict, html_path: str = RAPPORT_HTML_PATH) -> str:
             mlflow.log_artifact(html_path)
     print(f"\n[Graphiques] Rapport sauvegardé dans '{html_path}' (et loggué dans MLflow).")
     return html_path
+
+
+CATEGORIES_TAILLE = [
+    ("< 20 m²", 0.0, 20.0),
+    ("20 – 35 m²", 20.0, 35.0),
+    ("35 – 60 m²", 35.0, 60.0),
+    ("60 – 90 m²", 60.0, 90.0),
+    ("90 – 130 m²", 90.0, 130.0),
+    (">= 130 m²", 130.0, 1e6),
+]
+
+
+def evaluer_multivilles_complet(
+    df_hist: pd.DataFrame | None = None,
+    out_json_path: str = os.path.join("models", "evaluation_report.json"),
+) -> dict:
+    """
+    Double évaluation comparative hybride (ML sur `log(prix)` + AVM vs ML sur résidus + AVM),
+    calculée globalement, par ville et par catégorie de taille (< 20 m² jusqu'à >= 130 m²),
+    puis sauvegardée dans `models/evaluation_report.json`.
+    """
+    import json
+    from datetime import datetime, timezone
+    from src.ingestion.territoires import VILLES_CENTRES, resoudre_territoire
+
+    if df_hist is None:
+        df_hist = importer_table_historique()
+    if df_hist is None or df_hist.empty:
+        return {"error": "Aucune donnée historique disponible"}
+
+    # Garder uniquement les 12 villes-centres V1 si la colonne est présente
+    if "est_ville_centre" in df_hist.columns:
+        sub_vc = df_hist[df_hist["est_ville_centre"] == True]  # noqa: E712
+        if len(sub_vc) >= 30:
+            df_hist = sub_vc.copy()
+
+    X, y = fe.construire_X_y(df_hist)
+    y_arr = y.to_numpy(dtype=float)
+    surf = pd.to_numeric(df_hist.loc[X.index, "surface_m2"], errors="coerce").fillna(50.0).to_numpy(dtype=float)
+
+    n_splits = min(5, max(2, len(X) // 30))
+    kf = KFold(n_splits=n_splits, shuffle=True, random_state=42)
+
+    # Hybride 1 : ML sur log(prix) + AVM si disponible
+    modele_direct = tr.construire_modele()
+    y_ml_direct = cross_val_predict(modele_direct, X, y, cv=kf, n_jobs=-1)
+
+    # Ancrage AVM/DVF local pour fusion et pour Hybride 2 (résidus)
+    avm_col = pd.to_numeric(
+        df_hist.loc[X.index].get("avm_comp_blended_euro", df_hist.loc[X.index].get("valeur_dvf_ajustee_taille")),
+        errors="coerce",
+    )
+    dvf_ref = pd.to_numeric(df_hist.loc[X.index].get("pm2_voisinage"), errors="coerce") * surf
+    ancrage = avm_col.fillna(dvf_ref).fillna(float(np.median(y_arr))).clip(lower=15000.0).to_numpy(dtype=float)
+
+    y_hyb_direct = np.where(np.isfinite(avm_col.to_numpy()), 0.75 * y_ml_direct + 0.25 * ancrage, y_ml_direct)
+
+    # Hybride 2 : ML sur résidu log(prix / ancrage_dvf) + fusion AVM
+    y_residu_cible = np.log(np.maximum(y_arr, 1000.0) / np.maximum(ancrage, 1000.0))
+    from sklearn.base import clone
+    modele_residu = clone(tr.construire_modele().regressor)
+    y_pred_res_log = cross_val_predict(modele_residu, X, y_residu_cible, cv=kf, n_jobs=-1)
+    y_ml_res = ancrage * np.exp(np.clip(y_pred_res_log, -1.5, 1.5))
+    y_hyb_res = np.where(np.isfinite(avm_col.to_numpy()), 0.75 * y_ml_res + 0.25 * ancrage, y_ml_res)
+
+    # Intervalles Q10 / Q90 pour mesurer la couverture réelle
+    try:
+        q10_pred = cross_val_predict(tr.construire_modele_quantile(0.10), X, y, cv=kf, n_jobs=-1)
+        q90_pred = cross_val_predict(tr.construire_modele_quantile(0.90), X, y, cv=kf, n_jobs=-1)
+    except Exception:
+        q10_pred, q90_pred = None, None
+
+    m_direct = calculer_metriques_cv(y_arr, y_hyb_direct, surf, q10=q10_pred, q90=q90_pred)
+    m_residus = calculer_metriques_cv(y_arr, y_hyb_res, surf, q10=q10_pred, q90=q90_pred)
+    gagnant = "hybride_residus" if m_residus.get("mdape", 999) < m_direct.get("mdape", 999) else "hybride_log_prix"
+    y_best = y_hyb_res if gagnant == "hybride_residus" else y_hyb_direct
+
+    global_metrics = m_residus if gagnant == "hybride_residus" else m_direct
+
+    # Métriques par ville
+    sub_meta = df_hist.loc[X.index]
+    cps = sub_meta["code_postal"].tolist() if "code_postal" in sub_meta.columns else [None] * len(sub_meta)
+    villes = sub_meta["ville"].tolist() if "ville" in sub_meta.columns else [None] * len(sub_meta)
+    codes_terr = np.array([
+        (sub_meta["code_territoire"].iloc[i] if "code_territoire" in sub_meta.columns and pd.notna(sub_meta["code_territoire"].iloc[i]) else resoudre_territoire(cps[i], villes[i]) or "poitiers")
+        for i in range(len(sub_meta))
+    ])
+
+    par_ville = []
+    for code, cfg in VILLES_CENTRES.items():
+        mask_v = codes_terr == code
+        n_v = int(mask_v.sum())
+        if n_v < 5:
+            par_ville.append({
+                "code_territoire": code,
+                "nom": cfg.nom,
+                "nb_biens": n_v,
+                "maturite": "En calibration",
+            })
+            continue
+        mv = calculer_metriques_cv(
+            y_arr[mask_v], y_best[mask_v], surf[mask_v],
+            q10=q10_pred[mask_v] if q10_pred is not None else None,
+            q90=q90_pred[mask_v] if q90_pred is not None else None,
+        )
+        est_fiable = n_v >= 80 and mv.get("mdape", 99) <= 12.0 and mv.get("within_20pct", 0) >= 80.0
+        par_ville.append({
+            "code_territoire": code,
+            "nom": cfg.nom,
+            "maturite": "Fiable" if est_fiable else "En calibration",
+            **mv,
+        })
+
+    # Métriques par catégorie de taille (<20 m² jusqu'à >=130 m²)
+    par_categorie_taille = []
+    for label_t, s_min, s_max in CATEGORIES_TAILLE:
+        mask_t = (surf >= s_min) & (surf < s_max)
+        n_t = int(mask_t.sum())
+        if n_t == 0:
+            par_categorie_taille.append({"categorie": label_t, "nb_biens": 0})
+            continue
+        mt = calculer_metriques_cv(
+            y_arr[mask_t], y_best[mask_t], surf[mask_t],
+            q10=q10_pred[mask_t] if q10_pred is not None else None,
+            q90=q90_pred[mask_t] if q90_pred is not None else None,
+        )
+        par_categorie_taille.append({"categorie": label_t, **mt})
+
+    # Comparatif Avant / Après
+    avant_metrics = None
+    if os.path.exists(out_json_path):
+        try:
+            with open(out_json_path, "r", encoding="utf-8") as f:
+                prev = json.load(f)
+                avant_metrics = prev.get("global_metrics")
+        except Exception:
+            avant_metrics = None
+
+    rapport = {
+        "model_version": os.path.basename(tr.CHEMIN_MODELE),
+        "date_evaluation": datetime.now(timezone.utc).isoformat(),
+        "approche_retenue": gagnant,
+        "global_metrics": global_metrics,
+        "comparatif_modeles": {
+            "hybride_log_prix": m_direct,
+            "hybride_residus": m_residus,
+            "gagnant": gagnant,
+        },
+        "par_ville": par_ville,
+        "par_categorie_taille": par_categorie_taille,
+        "avant_apres": {
+            "avant": avant_metrics,
+            "apres": global_metrics,
+        },
+    }
+    os.makedirs(os.path.dirname(out_json_path) or "models", exist_ok=True)
+    with open(out_json_path, "w", encoding="utf-8") as f:
+        json.dump(rapport, f, ensure_ascii=False, indent=2)
+    print(f"[Évaluation Multi-Villes] Rapport sauvegardé -> {out_json_path} (gagnant : {gagnant}, MdAPE={global_metrics.get('mdape')}%, ±20%={global_metrics.get('within_20pct')}%)")
+    return rapport
 
 
 def executer_improvement(ouvrir_graphe: bool = False, **_kwargs) -> dict:

@@ -3,6 +3,14 @@
 Projet : Estimation du prix immobilier (Poitiers puis multi-villes) et détection fiable des biens sous-évalués (décote) ou surévalués.
 
 ## Règle de délégation
+
+### Pôle Direction & Stratégie
+- **Positionnement, benchmark concurrentiel, pricing, Go-to-Market** → `strategy-expert`
+- **PMF, proposition de valeur, parcours différenciant, rétention** → `product-expert`
+- **Scalabilité, risques tech/juridiques, Build vs Buy, moat technique** → `cto`
+- **Arbitrage final, cap business, ROI, Go/No-Go stratégique** → `director`
+
+### Pôle Exécution & Engineering
 - **Priorisation, specs métier, UX fonctionnelle, Go/No-Go** → `product-manager`
 - **Expériences ML, validation scientifique, intervalles conformes, bruit agents** → `research-engineer`
 - **Scraping, géocodage, déduplication, PostgreSQL/PostGIS, Open Data** → `data-engineer`
